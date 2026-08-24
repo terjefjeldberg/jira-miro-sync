@@ -10404,6 +10404,139 @@ export default {
       }
 
 
+      async function resolveCanvasPosition(
+        item,
+        seenIds = new Set()
+      ) {
+
+        const itemId =
+          String(
+            item?.id ??
+            ""
+          );
+
+        if (
+          itemId &&
+          seenIds.has(
+            itemId
+          )
+        ) {
+          return null;
+        }
+
+        if (
+          itemId
+        ) {
+          seenIds.add(
+            itemId
+          );
+        }
+
+        const x =
+          item?.position?.x;
+
+        const y =
+          item?.position?.y;
+
+        if (
+          typeof x !== "number" ||
+          typeof y !== "number"
+        ) {
+          return null;
+        }
+
+        const relativeTo =
+          String(
+            item?.position?.relativeTo ??
+            "canvas_center"
+          );
+
+        const parentId =
+          String(
+            item?.parent?.id ??
+            ""
+          ).trim();
+
+        if (
+          !parentId ||
+          relativeTo === "canvas_center"
+        ) {
+          return {
+            x,
+            y
+          };
+        }
+
+        const parentRead =
+          await readMiroItem(
+            parentId
+          );
+
+        if (
+          !parentRead.found ||
+          parentRead.ok === false
+        ) {
+          return null;
+        }
+
+        const parentCanvas =
+          await resolveCanvasPosition(
+            parentRead.item,
+            seenIds
+          );
+
+        if (
+          !parentCanvas
+        ) {
+          return null;
+        }
+
+        if (
+          relativeTo === "parent_center"
+        ) {
+          return {
+            x:
+              parentCanvas.x + x,
+            y:
+              parentCanvas.y + y
+          };
+        }
+
+        if (
+          relativeTo === "parent_top_left"
+        ) {
+
+          const parentWidth =
+            parentRead.item?.geometry?.width;
+
+          const parentHeight =
+            parentRead.item?.geometry?.height;
+
+          if (
+            typeof parentWidth !== "number" ||
+            typeof parentHeight !== "number"
+          ) {
+            return null;
+          }
+
+          return {
+            x:
+              parentCanvas.x -
+              parentWidth / 2 +
+              x,
+            y:
+              parentCanvas.y -
+              parentHeight / 2 +
+              y
+          };
+
+        }
+
+        return null;
+
+      }
+
+
       async function patchMiroItemPosition(
         itemId,
         x,
@@ -10839,11 +10972,23 @@ export default {
         frameItem
       ) {
 
+        const canvasPosition =
+          frameItem.type === "image"
+            ? await resolveCanvasPosition(
+                frameItem
+              )
+            : {
+                x:
+                  frameItem.position?.x,
+                y:
+                  frameItem.position?.y
+              };
+
         const currentX =
-          frameItem.position?.x;
+          canvasPosition?.x;
 
         const currentY =
-          frameItem.position?.y;
+          canvasPosition?.y;
 
         const cardWidth =
           frameItem.geometry?.width;
@@ -10872,13 +11017,10 @@ export default {
         }
 
 
-        // Image-based custom cards can be children of a Miro frame.
-        // In that case REST x/y coordinates are parent-relative rather
-        // than canvas-relative, so the generic active-board parking
-        // check incorrectly marks a visible card as parked. Exact KV
-        // mapping makes it safe to move this single image item directly.
+        // Keep the active-board safety rule for every custom card.
+        // Image cards may be children of a frame, so currentX/currentY
+        // above are first resolved to absolute canvas coordinates.
         if (
-          frameItem.type !== "image" &&
           !insideActiveBoard(
             currentX,
             currentY
