@@ -37,12 +37,14 @@ function miroUserIdentity(value) {
     return { id: value.trim(), name: "", email: "" };
   }
   return {
-    id: String(value.id ?? value.memberId ?? value.user?.id ?? "").trim(),
+    id: String(value.id ?? value.memberId ?? value.user?.id ?? value.data?.id ?? value.data?.memberId ?? "").trim(),
     name: String(
       value.name ??
       value.displayName ??
       value.user?.name ??
       value.user?.displayName ??
+      value.data?.name ??
+      value.data?.displayName ??
       "",
     ).trim(),
     email: String(
@@ -50,6 +52,8 @@ function miroUserIdentity(value) {
       value.emailAddress ??
       value.user?.email ??
       value.user?.emailAddress ??
+      value.data?.email ??
+      value.data?.emailAddress ??
       "",
     ).trim(),
   };
@@ -69,17 +73,47 @@ async function validateMiroRequest(request, env, ctx) {
 
 async function readMiroBoardMember(env, memberId) {
   if (!memberId || !env.MIRO_TOKEN || !env.MIRO_BOARD_ID) return null;
-  const response = await fetch(
+
+  const headers = {
+    Authorization: `Bearer ${env.MIRO_TOKEN}`,
+    Accept: "application/json",
+  };
+
+  const directResponse = await fetch(
     `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/members/${encodeURIComponent(memberId)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${env.MIRO_TOKEN}`,
-        Accept: "application/json",
-      },
-    },
+    { headers },
   );
-  if (!response.ok) return null;
-  return await response.json();
+
+  if (directResponse.ok) {
+    const directMember = await directResponse.json();
+    if (miroUserIdentity(directMember).name) return directMember;
+  }
+
+  for (let offset = 0; offset < 1000; offset += 50) {
+    const listResponse = await fetch(
+      `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/members?limit=50&offset=${offset}`,
+      { headers },
+    );
+
+    if (!listResponse.ok) break;
+
+    const payload = await listResponse.json();
+    const members = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
+
+    const match = members.find(member => {
+      const identity = miroUserIdentity(member);
+      return identity.id === String(memberId);
+    });
+
+    if (match) return match;
+    if (members.length < 50) break;
+  }
+
+  return null;
 }
 
 async function resolveStickyCreator(env, stickyId) {
