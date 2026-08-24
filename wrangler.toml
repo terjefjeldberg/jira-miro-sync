@@ -1,0 +1,8 @@
+name = "jira-to-miro"
+main = "src/worker.js"
+compatibility_date = "2026-08-24"
+keep_vars = true
+
+[[kv_namespaces]]
+binding = "CARD_MAP"
+id = "6c0c1018f7f940bbaaef6bc0bca76f47"
