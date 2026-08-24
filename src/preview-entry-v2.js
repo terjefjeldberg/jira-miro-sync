@@ -268,11 +268,7 @@ async function refreshCustomCardImage(env, issueKey) {
   );
   formData.append(
     "data",
-    new Blob(
-      [JSON.stringify({ title: `CUSTOM_JIRA_CARD:${issueKey}` })],
-      { type: "application/json" },
-    ),
-    "data.json",
+    JSON.stringify({ title: `CUSTOM_JIRA_CARD:${issueKey}` }),
   );
 
   const response = await fetch(
