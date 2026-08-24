@@ -82,7 +82,7 @@ function cardColorForWorkType(workType) {
 function priorityIconSvg(priority) {
   const value = String(priority ?? "").trim().toLowerCase();
   const red = "#E34935";
-  const orange = "#E97F33";
+  const medium = "#F5A700";
   const blue = "#1267E5";
   const gray = "#6B778C";
 
@@ -95,7 +95,7 @@ function priorityIconSvg(priority) {
   }
 
   if (value === "medium") {
-    return `<g transform="translate(18 95)" fill="none" stroke="${orange}" stroke-width="2.4" stroke-linecap="round"><path d="M0 0 H12"/></g>`;
+    return `<g transform="translate(18 92)" fill="none" stroke="${medium}" stroke-width="2.2" stroke-linecap="round"><path d="M0 0 H12"/><path d="M0 5 H12"/></g>`;
   }
 
   if (value === "low") {
