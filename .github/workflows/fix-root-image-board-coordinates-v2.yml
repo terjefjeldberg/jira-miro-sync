@@ -1,0 +1,126 @@
+name: Fix root image board coordinates v2
+
+on:
+  push:
+    branches:
+      - fix/custom-card-single-item
+    paths:
+      - .github/workflows/fix-root-image-board-coordinates-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/custom-card-single-item
+
+      - name: Apply root-image board coordinate fix
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/worker.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Missing expected block: {label}')
+              text = text.replace(old, new, 1)
+
+          # 1) KV key for source board frame.
+          marker = '''function customCardPendingKey(issueKey) {\n'''
+          insert = '''function customCardParentMapKey(issueKey) {\n\n  return `custom-card-parent:${normalizeIssueKey(issueKey)}`;\n\n}\n\n\n'''
+          if insert not in text:
+              if marker not in text:
+                  raise SystemExit('Missing customCardPendingKey marker')
+              text = text.replace(marker, insert + marker, 1)
+
+          # 2) Pass source frame id through sticky conversion.
+          replace_once(
+'''  async function createCustomCardAt(\n    jira,\n    x,\n    y\n  ) {''',
+'''  async function createCustomCardAt(\n    jira,\n    x,\n    y,\n    parentFrameId = null\n  ) {''',
+'createCustomCardAt signature')
+
+          replace_once(
+'''                groupId:\n                  String(\n                    image.id\n                  )\n              }''',
+'''                groupId:\n                  String(\n                    image.id\n                  ),\n                parentFrameId:\n                  String(\n                    parentFrameId ||\n                    ""\n                  ).trim()\n              }''',
+'registration parentFrameId')
+
+          replace_once(
+'''          stickyCanvasPosition.x,\n\n          stickyCanvasPosition.y\n\n        );''',
+'''          stickyCanvasPosition.x,\n\n          stickyCanvasPosition.y,\n\n          sticky.parentId || null\n\n        );''',
+'pass sticky parent id')
+
+          # 3) Registration endpoint stores source board frame id.
+          replace_once(
+'''        const groupId =\n          String(\n            card.groupId ??\n            ""\n          ).trim();\n\n\n        if (\n          !isSnIssueKey(\n            issueKey\n          ) ||\n          !groupId\n        ) {\n          continue;\n        }\n\n\n        validMappings.push({\n          issueKey,\n          groupId\n        });''',
+'''        const groupId =\n          String(\n            card.groupId ??\n            ""\n          ).trim();\n\n        const parentFrameId =\n          String(\n            card.parentFrameId ??\n            ""\n          ).trim();\n\n\n        if (\n          !isSnIssueKey(\n            issueKey\n          ) ||\n          !groupId\n        ) {\n          continue;\n        }\n\n\n        validMappings.push({\n          issueKey,\n          groupId,\n          parentFrameId\n        });''',
+'registration parse parent id')
+
+          replace_once(
+'''        validMappings.map(\n          mapping =>\n            env.CARD_MAP.put(\n\n              customCardMapKey(\n                mapping.issueKey\n              ),\n\n              mapping.groupId\n\n            )\n        )''',
+'''        validMappings.flatMap(\n          mapping => {\n            const writes = [\n              env.CARD_MAP.put(\n                customCardMapKey(\n                  mapping.issueKey\n                ),\n                mapping.groupId\n              )\n            ];\n\n            if (\n              mapping.parentFrameId\n            ) {\n              writes.push(\n                env.CARD_MAP.put(\n                  customCardParentMapKey(\n                    mapping.issueKey\n                  ),\n                  mapping.parentFrameId\n                )\n              );\n            } else {\n              writes.push(\n                env.CARD_MAP.delete(\n                  customCardParentMapKey(\n                    mapping.issueKey\n                  )\n                )\n              );\n            }\n\n            return writes;\n          }\n        )''',
+'registration store parent id')
+
+          # 4) Jira webhook reads source frame mapping.
+          replace_once(
+'''      const [\n        nativeItemId,\n        customContainerId\n      ] =\n        await Promise.all([\n\n          env.CARD_MAP.get(\n            cardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardMapKey(\n              issueKey\n            )\n          )\n\n        ]);''',
+'''      const [\n        nativeItemId,\n        customContainerId,\n        customSourceFrameId\n      ] =\n        await Promise.all([\n\n          env.CARD_MAP.get(\n            cardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardParentMapKey(\n              issueKey\n            )\n          )\n\n        ]);''',
+'webhook read source frame')
+
+          # 5) Root image cards: convert canvas position to board-frame-local coordinates.
+          start = '''      async function moveCustomFrame(\n        frameId,\n        frameItem\n      ) {\n\n        const canvasPosition =\n          frameItem.type === "image"\n            ? await resolveCanvasPosition(\n                frameItem\n              )\n            : {\n                x:\n                  frameItem.position?.x,\n                y:\n                  frameItem.position?.y\n              };\n\n        const currentX =\n          canvasPosition?.x;\n\n        const currentY =\n          canvasPosition?.y;\n\n        const cardWidth =\n          frameItem.geometry?.width;'''
+
+          replacement = '''      async function moveCustomFrame(\n        frameId,\n        frameItem,\n        sourceFrameId = null\n      ) {\n\n        const isImage =\n          frameItem.type === "image";\n\n        const canvasPosition =\n          isImage\n            ? await resolveCanvasPosition(\n                frameItem\n              )\n            : {\n                x:\n                  frameItem.position?.x,\n                y:\n                  frameItem.position?.y\n              };\n\n        let currentX =\n          canvasPosition?.x;\n\n        let currentY =\n          canvasPosition?.y;\n\n        let targetX =\n          targetColumn.targetX;\n\n        let sourceFrameDebug =\n          null;\n\n        if (\n          isImage\n        ) {\n\n          const normalizedSourceFrameId =\n            String(\n              sourceFrameId ||\n              ""\n            ).trim();\n\n          if (\n            !normalizedSourceFrameId\n          ) {\n            return {\n              ok: true,\n              mapped: true,\n              moved: false,\n              parked: true,\n              reason: "Custom image card has no registered source board frame"\n            };\n          }\n\n          const sourceFrameRead =\n            await readMiroItem(\n              normalizedSourceFrameId\n            );\n\n          if (\n            !sourceFrameRead.found ||\n            sourceFrameRead.ok === false\n          ) {\n            return {\n              ok: false,\n              mapped: true,\n              moved: false,\n              stage: "custom-source-frame-read",\n              reason: "Could not read registered source board frame"\n            };\n          }\n\n          const sourceFrame =\n            sourceFrameRead.item;\n\n          const sourceFrameCanvas =\n            await resolveCanvasPosition(\n              sourceFrame\n            );\n\n          const sourceFrameWidth =\n            sourceFrame.geometry?.width;\n\n          const sourceFrameHeight =\n            sourceFrame.geometry?.height;\n\n          if (\n            !sourceFrameCanvas ||\n            typeof sourceFrameWidth !== "number" ||\n            typeof sourceFrameHeight !== "number"\n          ) {\n            return {\n              ok: false,\n              mapped: true,\n              moved: false,\n              stage: "custom-source-frame-geometry",\n              reason: "Invalid registered source board frame geometry"\n            };\n          }\n\n          const sourceLeft =\n            sourceFrameCanvas.x -\n            sourceFrameWidth / 2;\n\n          const sourceTop =\n            sourceFrameCanvas.y -\n            sourceFrameHeight / 2;\n\n          currentX =\n            canvasPosition.x -\n            sourceLeft;\n\n          currentY =\n            canvasPosition.y -\n            sourceTop;\n\n          targetX =\n            sourceLeft +\n            targetColumn.targetX;\n\n          sourceFrameDebug = {\n            sourceFrameId:\n              normalizedSourceFrameId,\n            sourceLeft,\n            sourceTop,\n            localX:\n              currentX,\n            localY:\n              currentY\n          };\n        }\n\n        const cardWidth =\n          frameItem.geometry?.width;'''
+          replace_once(start, replacement, 'root image local coordinate conversion')
+
+          # Replace move target x and preserve canvas y for root images.
+          replace_once(
+'''            targetColumn.targetX,\n\n            currentY''',
+'''            targetX,\n\n            isImage\n              ? canvasPosition.y\n              : currentY''',
+'custom move target conversion')
+
+          # Add debug data on parked image result.
+          text = text.replace(
+'''            debugPosition: {\n              resolvedX:\n                currentX,''',
+'''            debugPosition: {\n              sourceFrame:\n                sourceFrameDebug,\n              resolvedX:\n                currentX,''',
+1)
+
+          # Pass source frame id into mover.
+          replace_once(
+'''      async function moveCustomCardContainer(\n        containerId\n      ) {''',
+'''      async function moveCustomCardContainer(\n        containerId,\n        sourceFrameId = null\n      ) {''',
+'container mover signature')
+
+          replace_once(
+'''          return await moveCustomFrame(\n            containerId,\n            read.item\n          );''',
+'''          return await moveCustomFrame(\n            containerId,\n            read.item,\n            sourceFrameId\n          );''',
+'pass source frame to custom mover')
+
+          replace_once(
+'''          ? await moveCustomCardContainer(\n              customContainerId\n            )''',
+'''          ? await moveCustomCardContainer(\n              customContainerId,\n              customSourceFrameId\n            )''',
+'webhook call source frame')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check src/worker.js
+
+      - name: Commit fix and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/fix-root-image-board-coordinates-v2.yml
+          git add src/worker.js .github/workflows/fix-root-image-board-coordinates-v2.yml
+          git commit -m "Fix custom root-image board coordinates"
+          git push origin HEAD:fix/custom-card-single-item
