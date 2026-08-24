@@ -1,0 +1,124 @@
+name: Fix custom card board-frame parent safety once
+
+on:
+  push:
+    branches:
+      - fix/custom-card-single-item
+    paths:
+      - .github/workflows/fix-custom-card-board-parent-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/custom-card-single-item
+
+      - name: Keep custom image cards inside their source board frame
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('src/worker.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Missing expected block: {label}')
+              text = text.replace(old, new, 1)
+
+          # 1) Separate KV key for the source/allowed board frame.
+          marker = '''function customCardPendingKey(issueKey) {\n'''
+          insert = '''function customCardParentMapKey(issueKey) {\n\n  return `custom-card-parent:${normalizeIssueKey(issueKey)}`;\n\n}\n\n\n'''
+          if insert not in text:
+              if marker not in text:
+                  raise SystemExit('Missing customCardPendingKey marker')
+              text = text.replace(marker, insert + marker, 1)
+
+          # 2) Sticky card creator accepts the original parent frame ID.
+          replace_once(
+'''  async function createCustomCardAt(\n    jira,\n    x,\n    y\n  ) {''',
+'''  async function createCustomCardAt(\n    jira,\n    x,\n    y,\n    parentFrameId = null\n  ) {''',
+'createCustomCardAt signature')
+
+          # Attach the newly created single image to the sticky's source frame.
+          anchor = '''    const image =\n      await miro.board.createImage({\n\n        title:\n          "CUSTOM_JIRA_CARD:" +\n          jira.issueKey,\n\n        url:\n          dataUrl,\n\n        linkedTo:\n          jira.browseUrl,\n\n        x,\n        y,\n        width\n\n      });\n\n    try {'''
+          replacement = '''    const image =\n      await miro.board.createImage({\n\n        title:\n          "CUSTOM_JIRA_CARD:" +\n          jira.issueKey,\n\n        url:\n          dataUrl,\n\n        linkedTo:\n          jira.browseUrl,\n\n        x,\n        y,\n        width\n\n      });\n\n    const normalizedParentFrameId =\n      String(\n        parentFrameId ||\n        ""\n      ).trim();\n\n    if (\n      normalizedParentFrameId\n    ) {\n\n      const parentFrame =\n        await miro.board.getById(\n          normalizedParentFrameId\n        );\n\n      if (\n        !parentFrame ||\n        parentFrame.type !== "frame"\n      ) {\n        await miro.board.remove(\n          image\n        );\n\n        throw new Error(\n          "Could not attach the custom card to the selected sticky's board frame."\n        );\n      }\n\n      await parentFrame.add(\n        image\n      );\n\n    }\n\n    try {'''
+          replace_once(anchor, replacement, 'attach image to source frame')
+
+          # Include parent frame in registration.
+          replace_once(
+'''                groupId:\n                  String(\n                    image.id\n                  )\n              }''',
+'''                groupId:\n                  String(\n                    image.id\n                  ),\n                parentFrameId:\n                  normalizedParentFrameId\n              }''',
+'card registration parentFrameId')
+
+          # Pass sticky parent ID into createCustomCardAt.
+          replace_once(
+'''          stickyCanvasPosition.x,\n\n          stickyCanvasPosition.y\n\n        );''',
+'''          stickyCanvasPosition.x,\n\n          stickyCanvasPosition.y,\n\n          sticky.parentId || null\n\n        );''',
+'pass sticky parentFrameId')
+
+          # 3) Registration endpoint persists both image ID and allowed parent frame ID.
+          replace_once(
+'''        const groupId =\n          String(\n            card.groupId ??\n            ""\n          ).trim();\n\n\n        if (\n          !isSnIssueKey(\n            issueKey\n          ) ||\n          !groupId\n        ) {\n          continue;\n        }\n\n\n        validMappings.push({\n          issueKey,\n          groupId\n        });''',
+'''        const groupId =\n          String(\n            card.groupId ??\n            ""\n          ).trim();\n\n        const parentFrameId =\n          String(\n            card.parentFrameId ??\n            ""\n          ).trim();\n\n\n        if (\n          !isSnIssueKey(\n            issueKey\n          ) ||\n          !groupId\n        ) {\n          continue;\n        }\n\n\n        validMappings.push({\n          issueKey,\n          groupId,\n          parentFrameId\n        });''',
+'registration parse parentFrameId')
+
+          replace_once(
+'''        validMappings.map(\n          mapping =>\n            env.CARD_MAP.put(\n\n              customCardMapKey(\n                mapping.issueKey\n              ),\n\n              mapping.groupId\n\n            )\n        )''',
+'''        validMappings.flatMap(\n          mapping => {\n\n            const writes = [\n              env.CARD_MAP.put(\n                customCardMapKey(\n                  mapping.issueKey\n                ),\n                mapping.groupId\n              )\n            ];\n\n            if (\n              mapping.parentFrameId\n            ) {\n              writes.push(\n                env.CARD_MAP.put(\n                  customCardParentMapKey(\n                    mapping.issueKey\n                  ),\n                  mapping.parentFrameId\n                )\n              );\n            } else {\n              writes.push(\n                env.CARD_MAP.delete(\n                  customCardParentMapKey(\n                    mapping.issueKey\n                  )\n                )\n              );\n            }\n\n            return writes;\n\n          }\n        )''',
+'registration store parentFrameId')
+
+          # 4) Jira webhook also reads the allowed source frame mapping.
+          replace_once(
+'''      const [\n        nativeItemId,\n        customContainerId\n      ] =\n        await Promise.all([\n\n          env.CARD_MAP.get(\n            cardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardMapKey(\n              issueKey\n            )\n          )\n\n        ]);''',
+'''      const [\n        nativeItemId,\n        customContainerId,\n        customExpectedParentFrameId\n      ] =\n        await Promise.all([\n\n          env.CARD_MAP.get(\n            cardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardMapKey(\n              issueKey\n            )\n          ),\n\n          env.CARD_MAP.get(\n            customCardParentMapKey(\n              issueKey\n            )\n          )\n\n        ]);''',
+'webhook parent mapping lookup')
+
+          # 5) Image movement uses local coordinates only inside its registered source frame.
+          old_start = '''      async function moveCustomFrame(\n        frameId,\n        frameItem\n      ) {\n\n        const canvasPosition =\n          frameItem.type === "image"\n            ? await resolveCanvasPosition(\n                frameItem\n              )\n            : {\n                x:\n                  frameItem.position?.x,\n                y:\n                  frameItem.position?.y\n              };\n\n        const currentX =\n          canvasPosition?.x;\n\n        const currentY =\n          canvasPosition?.y;'''
+          new_start = '''      async function moveCustomFrame(\n        frameId,\n        frameItem,\n        expectedParentFrameId = null\n      ) {\n\n        const isImage =\n          frameItem.type === "image";\n\n        const actualParentFrameId =\n          String(\n            frameItem.parent?.id ??\n            ""\n          ).trim();\n\n        const expectedParentId =\n          String(\n            expectedParentFrameId ||\n            ""\n          ).trim();\n\n        // Safety rule for the new single-image custom card:\n        // it may only be Jira-moved while it is still a child of\n        // the exact board frame it was created from. If a user\n        // drags it out of that frame, it becomes parked.\n        if (\n          isImage &&\n          (\n            !expectedParentId ||\n            actualParentFrameId !== expectedParentId\n          )\n        ) {\n          return {\n            ok: true,\n            mapped: true,\n            moved: false,\n            parked: true,\n            reason: "Custom image card is outside its registered board frame",\n            expectedParentFrameId: expectedParentId || null,\n            actualParentFrameId: actualParentFrameId || null\n          };\n        }\n\n        // ACTIVE_BOARD and column limits are the local coordinates\n        // inside this board frame. Do NOT convert image coordinates\n        // back to global canvas coordinates here.\n        const currentX =\n          frameItem.position?.x;\n\n        const currentY =\n          frameItem.position?.y;'''
+          replace_once(old_start, new_start, 'moveCustomFrame local source-frame coordinates')
+
+          # Remove the old image-specific detach PATCH and use one normal position PATCH.
+          old_patch = '''        let patchResponse;\n\n\n        if (\n          frameItem.type === "image"\n        ) {\n\n          patchResponse =\n            await fetch(\n\n              boardItemsBase +\n              encodeURIComponent(\n                frameId\n              ),\n\n              {\n                method:\n                  "PATCH",\n\n                headers: {\n                  ...miroHeaders,\n                  "Content-Type":\n                    "application/json"\n                },\n\n                body:\n                  JSON.stringify({\n                    parent: {\n                      id:\n                        null\n                    },\n                    position: {\n                      x:\n                        targetColumn.targetX,\n                      y:\n                        currentY,\n                      origin:\n                        "center"\n                    }\n                  })\n              }\n\n            );\n\n        } else {\n\n          patchResponse =\n            await patchMiroItemPosition(\n\n              frameId,\n\n              targetColumn.targetX,\n\n              currentY\n\n            );\n\n        }'''
+          new_patch = '''        const patchResponse =\n          await patchMiroItemPosition(\n\n            frameId,\n\n            targetColumn.targetX,\n\n            currentY\n\n          );'''
+          replace_once(old_patch, new_patch, 'preserve image parent while moving')
+
+          # Pass expected parent through custom container mover.
+          replace_once(
+'''      async function moveCustomCardContainer(\n        containerId\n      ) {''',
+'''      async function moveCustomCardContainer(\n        containerId,\n        expectedParentFrameId = null\n      ) {''',
+'moveCustomCardContainer signature')
+
+          replace_once(
+'''          return await moveCustomFrame(\n            containerId,\n            read.item\n          );''',
+'''          return await moveCustomFrame(\n            containerId,\n            read.item,\n            expectedParentFrameId\n          );''',
+'pass expected parent to mover')
+
+          replace_once(
+'''          ? await moveCustomCardContainer(\n              customContainerId\n            )''',
+'''          ? await moveCustomCardContainer(\n              customContainerId,\n              customExpectedParentFrameId\n            )''',
+'webhook call expected parent')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check src/worker.js
+
+      - name: Commit fix and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/fix-custom-card-board-parent-once.yml
+          git add src/worker.js .github/workflows/fix-custom-card-board-parent-once.yml
+          git commit -m "Keep custom cards inside registered board frame"
+          git push origin HEAD:fix/custom-card-single-item
