@@ -67,9 +67,8 @@ async function readMiroBoardMember(env, memberId) {
   return await response.json();
 }
 
-async function resolveStickyCreator(env, stickyId, claimedCreatedBy) {
+async function resolveStickyCreator(env, stickyId) {
   const normalizedStickyId = String(stickyId ?? "").trim();
-  const claimedCreatorId = String(claimedCreatedBy ?? "").trim();
 
   if (!normalizedStickyId) {
     return {
@@ -117,16 +116,6 @@ async function resolveStickyCreator(env, stickyId, claimedCreatedBy) {
   }
 
   let creator = miroUserIdentity(item.createdBy);
-
-  if (claimedCreatorId && creator.id && claimedCreatorId !== creator.id) {
-    return {
-      ok: false,
-      stage: "reporter-verify-created-by",
-      reason: "Miro createdBy did not match the selected sticky",
-      claimedCreatorId,
-      actualCreatorId: creator.id,
-    };
-  }
 
   if (!creator.name && creator.id) {
     const member = await readMiroBoardMember(env, creator.id);
@@ -278,15 +267,22 @@ async function injectStickyCreatorIntoPanel(baseResponse) {
   if (!baseResponse.ok) return baseResponse;
 
   const html = await baseResponse.clone().text();
-  const original = `              workType:\n                detectedWorkType\n\n            }`;
-  const replacement = `              workType:\n                detectedWorkType,\n\n              stickyId:\n                String(sticky.id),\n\n              createdBy:\n                String(sticky.createdBy || \"\")\n\n            }`;
 
-  if (!html.includes(original)) {
-    console.warn("MIRO REPORTER SYNC: could not inject sticky creator fields into panel HTML");
+  // Add only the sticky item ID to the existing request body. The backend then
+  // reads the authoritative createdBy value directly from Miro REST, avoiding
+  // SDK shape differences such as createdBy being an object rather than a string.
+  const pattern = /(workType:\s*\n\s*detectedWorkType)(\s*\n\s*})/g;
+  const replaced = html.replace(
+    pattern,
+    `$1,\n\n              stickyId:\n                String(sticky.id)$2`,
+  );
+
+  if (replaced === html) {
+    console.warn("MIRO REPORTER SYNC: could not inject stickyId into panel HTML");
     return baseResponse;
   }
 
-  return responseWithText(baseResponse, html.replace(original, replacement));
+  return responseWithText(baseResponse, replaced);
 }
 
 export default {
@@ -329,7 +325,6 @@ export default {
         const creatorResult = await resolveStickyCreator(
           env,
           requestBody?.stickyId,
-          requestBody?.createdBy,
         );
 
         if (!creatorResult.ok) {
