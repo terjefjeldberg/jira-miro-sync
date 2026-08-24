@@ -151,22 +151,30 @@ export default {
 
     const firstResponse = await fallbackWorker.fetch(request.clone(), env, ctx);
     const firstError = await readJson(firstResponse);
+    const miroCreatorId = String(firstError?.miroCreatorId ?? firstError?.fallback?.miroCreatorId ?? "").trim();
+    const miroCreatorName = String(
+      firstError?.miroCreatorName ??
+      firstError?.fallback?.miroCreatorName ??
+      (miroCreatorId === "3458764589815876301" ? "Kristoffer Rask" : "")
+    ).trim();
 
     if (
       firstResponse.status !== 409 ||
       firstError?.stage !== "reporter-fallback-jira-search" ||
-      !firstError?.miroCreatorId ||
-      !firstError?.miroCreatorName
+      !miroCreatorId ||
+      !miroCreatorName
     ) {
       return firstResponse;
     }
 
-    const reporter = await resolveJiraReporter(env, String(firstError.miroCreatorName));
+    const reporter = await resolveJiraReporter(env, miroCreatorName);
     if (!reporter.ok) {
       return jsonResponse({
         ...firstError,
         stage: reporter.stage,
         reason: reporter.reason,
+        miroCreatorId,
+        miroCreatorName,
         jiraReporterLookup: reporter,
       }, 409);
     }
@@ -185,8 +193,8 @@ export default {
         reason: update.reason,
         reporterSync: update,
         reporterResolvedFrom: {
-          miroCreatorId: firstError.miroCreatorId,
-          miroCreatorName: firstError.miroCreatorName,
+          miroCreatorId,
+          miroCreatorName,
           jiraReporterName: reporter.displayName,
           jiraReporterAccountId: reporter.accountId,
           jiraReporterSource: reporter.source,
@@ -199,8 +207,8 @@ export default {
       reporterSync: {
         ok: true,
         applied: true,
-        miroCreatorId: firstError.miroCreatorId,
-        miroCreatorName: firstError.miroCreatorName,
+        miroCreatorId,
+        miroCreatorName,
         jiraReporterName: reporter.displayName,
         jiraReporterAccountId: reporter.accountId,
         jiraReporterSource: reporter.source,
