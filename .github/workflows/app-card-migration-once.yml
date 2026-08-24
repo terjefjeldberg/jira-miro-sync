@@ -1,0 +1,100 @@
+name: Apply App Card migration once
+
+on:
+  push:
+    branches:
+      - fix/custom-card-single-item
+    paths:
+      - .github/workflows/app-card-migration-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/custom-card-single-item
+
+      - name: Convert new custom cards to single Miro App Cards
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/worker.js')
+          text = path.read_text(encoding='utf-8')
+
+          def must_replace(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Missing expected source block: {label}')
+              text = text.replace(old, new, 1)
+
+          # 1) Add a snapshot reader for single-item Miro App Cards.
+          marker = '''  async function customSyncGetFrameSnapshot(frameId) {\n'''
+          insert = '''  async function customSyncGetAppCardSnapshot(appCardId) {\n\n    const appCard =\n      await miro.board.getById(\n        appCardId\n      );\n\n\n    if (\n      !appCard ||\n      appCard.type !== "app_card"\n    ) {\n      return null;\n    }\n\n\n    const issueKeyField =\n      (\n        appCard.fields ||\n        []\n      ).find(\n        field =>\n          customSyncIsIssueKey(\n            field?.value\n          )\n      );\n\n\n    if (\n      !issueKeyField\n    ) {\n      return null;\n    }\n\n\n    const issueKey =\n      customSyncPlainText(\n        issueKeyField.value\n      ).toUpperCase();\n\n\n    return {\n\n      container:\n        appCard,\n\n      containerType:\n        "app_card",\n\n      items: [\n        appCard\n      ],\n\n      issueKey,\n\n      cardX:\n        appCard.x,\n\n      cardY:\n        appCard.y,\n\n      cardWidth:\n        appCard.width,\n\n      cardHeight:\n        appCard.height\n\n    };\n\n  }\n\n\n'''
+          if marker not in text:
+              raise SystemExit('Missing customSyncGetFrameSnapshot marker')
+          text = text.replace(marker, insert + marker, 1)
+
+          # 2) Let the custom sync treat app_card as a first-class single container.
+          old = '''    if (\n      item.type === "frame"\n    ) {\n\n      return await customSyncGetFrameSnapshot(\n        containerId\n      );\n\n    }\n\n\n    if (\n      item.type === "group"\n    ) {'''
+          new = '''    if (\n      item.type === "app_card"\n    ) {\n\n      return await customSyncGetAppCardSnapshot(\n        containerId\n      );\n\n    }\n\n\n    if (\n      item.type === "frame"\n    ) {\n\n      return await customSyncGetFrameSnapshot(\n        containerId\n      );\n\n    }\n\n\n    if (\n      item.type === "group"\n    ) {'''
+          must_replace(old, new, 'customSyncGetContainerSnapshot app_card support')
+
+          # 3) Discover app cards as well as legacy frame-based custom cards.
+          old = '''      const frames =\n        await miro.board.get({\n          type:\n            "frame"\n        });\n\n\n      let registered = 0;\n\n      const mappings =\n        [];\n\n\n      for (\n        const frame\n        of frames\n      ) {\n\n        const snapshot =\n          await customSyncGetFrameSnapshot(\n            String(\n              frame.id\n            )\n          );'''
+          new = '''      const appCards =\n        await miro.board.get({\n          type:\n            "app_card"\n        });\n\n\n      const frames =\n        await miro.board.get({\n          type:\n            "frame"\n        });\n\n\n      let registered = 0;\n\n      const mappings =\n        [];\n\n\n      const customContainers = [\n        ...frames,\n        ...appCards\n      ];\n\n\n      for (\n        const container\n        of customContainers\n      ) {\n\n        const snapshot =\n          container.type === "app_card"\n            ? await customSyncGetAppCardSnapshot(\n                String(\n                  container.id\n                )\n              )\n            : await customSyncGetFrameSnapshot(\n                String(\n                  container.id\n                )\n              );'''
+          must_replace(old, new, 'custom card discovery includes app_card')
+
+          # 4) Root app cards must generate movement candidates just like frames.
+          old = '''        if (\n          item.type === "frame"\n        ) {\n\n          candidateContainerIds.add(\n            String(\n              item.id\n            )\n          );'''
+          new = '''        if (\n          item.type === "frame" ||\n          item.type === "app_card"\n        ) {\n\n          candidateContainerIds.add(\n            String(\n              item.id\n            )\n          );'''
+          must_replace(old, new, 'movement events include app_card')
+
+          # 5) Sticky conversion now creates ONE App Card instead of a frame plus child items.
+          pattern = re.compile(
+              r'  async function createCustomCardAt\(\n    jira,\n    x,\n    y\n  \) \{.*?\n  \}\n\n\n  // ========================================================\n  // STICKY -> CUSTOM CARD POSITION',
+              re.S,
+          )
+          replacement = '''  async function createCustomCardAt(\n    jira,\n    x,\n    y\n  ) {\n\n    const width =\n      320;\n\n\n    const cardColor =\n      customCardColorForWorkType(\n        jira.workType\n      );\n\n\n    const fields = [\n\n      {\n        value:\n          jira.issueKey,\n\n        tooltip:\n          "Jira issue"\n      },\n\n      {\n        value:\n          jira.priority,\n\n        tooltip:\n          "Priority"\n      },\n\n      {\n        value:\n          jira.assignee,\n\n        tooltip:\n          "Assignee"\n      }\n\n    ];\n\n\n    if (\n      jira.priorityIconUrl\n    ) {\n\n      fields[1].iconUrl =\n        jira.priorityIconUrl;\n\n      fields[1].iconShape =\n        "square";\n\n    }\n\n\n    const appCard =\n      await miro.board.createAppCard({\n\n        title:\n          jira.summary,\n\n        linkedTo:\n          jira.browseUrl,\n\n        style: {\n\n          cardTheme:\n            cardColor,\n\n          fillBackground:\n            true\n\n        },\n\n        fields,\n\n        x,\n\n        y,\n\n        width,\n\n        status:\n          "connected"\n\n      });\n\n\n    // Register immediately so Jira -> Miro can move this exact\n    // single item without waiting for a later board scan.\n    try {\n\n      const boardInfo =\n        await miro.board.getInfo();\n\n\n      const registrationResponse =\n        await backendPost(\n\n          "/register-custom-cards",\n\n          {\n\n            boardId:\n              boardInfo.id,\n\n            cards: [\n\n              {\n                issueKey:\n                  jira.issueKey,\n\n                // Existing backend field name retained for\n                // compatibility. The value is now one App Card ID.\n                groupId:\n                  String(\n                    appCard.id\n                  )\n              }\n\n            ]\n\n          }\n\n        );\n\n\n      if (\n        !registrationResponse.ok\n      ) {\n\n        console.warn(\n          "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",\n          await registrationResponse.text()\n        );\n\n      }\n\n\n    } catch (\n      registrationError\n    ) {\n\n      console.warn(\n        "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",\n        registrationError\n      );\n\n    }\n\n\n    // Keep the old return shape for the surrounding conversion\n    // code. `frame` now points to the single App Card item.\n    return {\n\n      frame:\n        appCard,\n\n      items: [\n        appCard\n      ]\n\n    };\n\n  }\n\n\n  // ========================================================\n  // STICKY -> CUSTOM CARD POSITION'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected to replace one createCustomCardAt block, got {count}')
+
+          # 6) Server-side Jira -> Miro moves either an App Card or legacy frame with one PATCH.
+          old = '''        if (\n          read.found &&\n          read.ok !== false &&\n          read.item?.type === "frame"\n        ) {\n\n          return await moveCustomFrame(\n            containerId,\n            read.item\n          );\n\n        }'''
+          new = '''        if (\n          read.found &&\n          read.ok !== false &&\n          (\n            read.item?.type === "app_card" ||\n            read.item?.type === "frame"\n          )\n        ) {\n\n          return await moveCustomFrame(\n            containerId,\n            read.item\n          );\n\n        }'''
+          must_replace(old, new, 'server-side movement supports app_card')
+
+          # 7) Make logging/reporting reflect the new single-item mode.
+          text = text.replace(
+              '"CUSTOM CARD EXPERIMENT frame-based Miro -> Jira status sync ACTIVE"',
+              '"CUSTOM CARD EXPERIMENT single-item App Card Miro -> Jira status sync ACTIVE"',
+              1,
+          )
+          text = text.replace(
+              '"CUSTOM CARD EXPERIMENT Jira -> Miro Web SDK frame movement ACTIVE"',
+              '"CUSTOM CARD EXPERIMENT Jira -> Miro single-item movement ACTIVE"',
+              1,
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check src/worker.js
+
+      - name: Commit migration and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/app-card-migration-once.yml
+          git add src/worker.js .github/workflows/app-card-migration-once.yml
+          git commit -m "Use single Miro App Cards for sticky conversion"
+          git push origin HEAD:fix/custom-card-single-item
