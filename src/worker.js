@@ -5769,7 +5769,7 @@ export default {
 
 
     // Keep the old return shape for the surrounding conversion
-    // code. `frame` now points to the single App Card item.
+    // code. The frame property now points to the single App Card item.
     return {
 
       frame:
