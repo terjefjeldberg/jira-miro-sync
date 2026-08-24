@@ -5630,11 +5630,59 @@ export default {
       );
 
 
+    // App Cards apply Miro's own rendering on top of the theme color.
+    // Use a stronger work-type theme here so the issue type remains obvious
+    // while preserving the original custom-card palette for legacy frames.
+    const APP_CARD_WORK_TYPE_COLORS = {
+
+      bug:
+        "#F45BD3",
+
+      improvement:
+        "#6FA8FF",
+
+      spike:
+        "#FFD84D",
+
+      "new feature":
+        "#9FE04F",
+
+      "hotfix candidate":
+        "#FF914D",
+
+      "task/config/doc/test":
+        "#4FD7CD"
+
+    };
+
+
+    const appCardTheme =
+      APP_CARD_WORK_TYPE_COLORS[
+        String(
+          jira.workType ?? ""
+        )
+          .trim()
+          .toLowerCase()
+      ]
+      ||
+      cardColor;
+
+
+    const fieldFillColor =
+      cardColor;
+
+
     const fields = [
 
       {
         value:
           jira.issueKey,
+
+        fillColor:
+          fieldFillColor,
+
+        textColor:
+          "#1A1A1A",
 
         tooltip:
           "Jira issue"
@@ -5644,6 +5692,12 @@ export default {
         value:
           jira.priority,
 
+        fillColor:
+          fieldFillColor,
+
+        textColor:
+          "#1A1A1A",
+
         tooltip:
           "Priority"
       },
@@ -5651,6 +5705,12 @@ export default {
       {
         value:
           jira.assignee,
+
+        fillColor:
+          fieldFillColor,
+
+        textColor:
+          "#1A1A1A",
 
         tooltip:
           "Assignee"
@@ -5684,7 +5744,7 @@ export default {
         style: {
 
           cardTheme:
-            cardColor,
+            appCardTheme,
 
           fillBackground:
             true
