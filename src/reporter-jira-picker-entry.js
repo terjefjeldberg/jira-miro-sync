@@ -68,9 +68,9 @@ async function findWithUserPicker(env, displayName) {
 async function findWithIssueSearch(env, displayName) {
   const { base, headers } = jiraConfig(env);
   const escaped = String(displayName).replace(/\\/g, "\\\\").replace(/\"/g, '\\"');
-  const jql = `project = SN AND (reporter = \"${escaped}\" OR assignee = \"${escaped}\") ORDER BY updated DESC`;
+  const jql = `(reporter = \"${escaped}\" OR assignee = \"${escaped}\") ORDER BY updated DESC`;
   const response = await fetch(
-    `${base}/search/jql?jql=${encodeURIComponent(jql)}&fields=reporter,assignee&maxResults=50`,
+    `${base}/search/jql?jql=${encodeURIComponent(jql)}&fields=reporter,assignee&maxResults=100`,
     { headers },
   );
 
@@ -97,13 +97,13 @@ async function findWithIssueSearch(env, displayName) {
       ok: false,
       stage: "reporter-jira-issue-search-match",
       reason: byId.size === 0
-        ? `Could not infer Jira accountId for ${displayName} from existing SN issues`
-        : `More than one Jira accountId matched ${displayName} in existing SN issues`,
+        ? `Could not infer Jira accountId for ${displayName} from any accessible Jira issue`
+        : `More than one Jira accountId matched ${displayName} across accessible Jira issues`,
     };
   }
 
   const user = Array.from(byId.values())[0];
-  return { ok: true, accountId: String(user.accountId), displayName: String(user.displayName ?? displayName), source: "issue-search" };
+  return { ok: true, accountId: String(user.accountId), displayName: String(user.displayName ?? displayName), source: "issue-search-all-projects" };
 }
 
 async function resolveJiraReporter(env, displayName) {
