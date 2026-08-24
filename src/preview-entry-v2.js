@@ -295,7 +295,7 @@ async function buildCardSvgDataUrl(jira) {
   const priorityIcon = priorityIconSvg(jira.priority);
 
   const titleSvg = [
-    `<text x="${titleLayout.centerX}" y="${titleLayout.startY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="${titleLayout.fontSize}" font-weight="700" fill="#1A1A1A">`,
+    `<text x="${titleLayout.centerX}" y="${titleLayout.startY}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${titleLayout.fontSize}" font-weight="400" fill="#1A1A1A">`,
     ...titleLayout.lines.map((line, index) =>
       index === 0
         ? `<tspan x="${titleLayout.centerX}">${svgEscape(line)}</tspan>`
