@@ -1,0 +1,101 @@
+name: Apply single image custom card
+
+on:
+  push:
+    branches:
+      - fix/custom-card-single-item
+    paths:
+      - .github/workflows/apply-single-image-card.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/custom-card-single-item
+
+      - name: Convert grouped custom cards to one image item
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/worker.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Missing expected block: {label}')
+              text = text.replace(old, new, 1)
+
+          # 1. Add image snapshot support.
+          marker = '  async function customSyncGetFrameSnapshot(frameId) {\n'
+          insert = '''  async function customSyncGetImageSnapshot(imageId) {\n\n    const image =\n      await miro.board.getById(\n        imageId\n      );\n\n    if (\n      !image ||\n      image.type !== "image"\n    ) {\n      return null;\n    }\n\n    const title =\n      String(\n        image.title ||\n        ""\n      ).trim();\n\n    const match =\n      title.match(\n        /^CUSTOM_JIRA_CARD:(SN-\\\\d+)$/i\n      );\n\n    if (\n      !match\n    ) {\n      return null;\n    }\n\n    const issueKey =\n      match[1].toUpperCase();\n\n    return {\n\n      container:\n        image,\n\n      containerType:\n        "image",\n\n      items: [\n        image\n      ],\n\n      issueKey,\n\n      cardX:\n        image.x,\n\n      cardY:\n        image.y,\n\n      cardWidth:\n        image.width,\n\n      cardHeight:\n        image.height\n\n    };\n\n  }\n\n\n'''
+          if 'async function customSyncGetImageSnapshot' not in text:
+              text = text.replace(marker, insert + marker, 1)
+
+          # 2. Container snapshot recognizes image cards.
+          old = '''    if (\n      item.type === "frame"\n    ) {\n\n      return await customSyncGetFrameSnapshot(\n        containerId\n      );\n\n    }\n'''
+          new = '''    if (\n      item.type === "image"\n    ) {\n\n      return await customSyncGetImageSnapshot(\n        containerId\n      );\n\n    }\n\n\n    if (\n      item.type === "frame"\n    ) {\n\n      return await customSyncGetFrameSnapshot(\n        containerId\n      );\n\n    }\n'''
+          replace_once(old, new, 'container image support')
+
+          # 3. Scan image cards too.
+          old = '''      const frames =\n        await miro.board.get({\n          type:\n            "frame"\n        });\n'''
+          new = '''      const images =\n        await miro.board.get({\n          type:\n            "image"\n        });\n\n\n      const frames =\n        await miro.board.get({\n          type:\n            "frame"\n        });\n'''
+          replace_once(old, new, 'scan images')
+
+          old = '''      const customContainers = [\n        ...frames,\n        ...appCards,\n        ...groups\n      ];\n'''
+          new = '''      const customContainers = [\n        ...frames,\n        ...appCards,\n        ...groups,\n        ...images\n      ];\n'''
+          replace_once(old, new, 'include images in containers')
+
+          old = '''          container.type === "app_card"\n            ? await customSyncGetAppCardSnapshot(\n                String(\n                  container.id\n                )\n              )\n            : container.type === "group"\n              ? await customSyncGetLegacyGroupSnapshot(\n                  String(\n                    container.id\n                  )\n                )\n              : await customSyncGetFrameSnapshot(\n                  String(\n                    container.id\n                  )\n                );\n'''
+          new = '''          container.type === "app_card"\n            ? await customSyncGetAppCardSnapshot(\n                String(\n                  container.id\n                )\n              )\n            : container.type === "image"\n              ? await customSyncGetImageSnapshot(\n                  String(\n                    container.id\n                  )\n                )\n              : container.type === "group"\n                ? await customSyncGetLegacyGroupSnapshot(\n                    String(\n                      container.id\n                    )\n                  )\n                : await customSyncGetFrameSnapshot(\n                    String(\n                      container.id\n                    )\n                  );\n'''
+          replace_once(old, new, 'image snapshot in scan')
+
+          # 4. Movement events recognize image cards directly.
+          old = '''        if (\n          item.type === "frame" ||\n          item.type === "app_card"\n        ) {\n'''
+          new = '''        if (\n          item.type === "frame" ||\n          item.type === "app_card" ||\n          item.type === "image"\n        ) {\n'''
+          replace_once(old, new, 'image update events')
+
+          # 5. Replace sticky custom card creation with ONE SVG image item.
+          pattern = re.compile(
+              r'  async function createCustomCardAt\(\n    jira,\n    x,\n    y\n  \) \{.*?\n  \}\n\n\n  // ========================================================\n  // STICKY -> CUSTOM CARD POSITION',
+              re.S,
+          )
+          replacement = '''  async function createCustomCardAt(\n    jira,\n    x,\n    y\n  ) {\n\n    const width =\n      320;\n\n    const height =\n      120;\n\n    const cardColor =\n      customCardColorForWorkType(\n        jira.workType\n      );\n\n    function svgEscape(value) {\n\n      return String(\n        value ??\n        ""\n      )\n        .replace(/&/g, "&amp;")\n        .replace(/</g, "&lt;")\n        .replace(/>/g, "&gt;")\n        .replace(/"/g, "&quot;")\n        .replace(/'/g, "&apos;");\n\n    }\n\n    const summary =\n      svgEscape(\n        jira.summary\n      );\n\n    const issueKey =\n      svgEscape(\n        jira.issueKey\n      );\n\n    const priority =\n      svgEscape(\n        jira.priority\n      );\n\n    const assignee =\n      svgEscape(\n        jira.assignee\n      );\n\n    const titleSize =\n      titleFontSize(\n        jira.summary\n      );\n\n    const svg =\n      [\n        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',\n        '<rect width="320" height="120" rx="0" fill="' + cardColor + '"/>',\n        '<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">' + issueKey + '</text>',\n        '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',\n        '<text x="20" y="60" font-family="Arial, sans-serif" font-size="' + titleSize + '" font-weight="700" fill="#1A1A1A">' + summary + '</text>',\n        '<g transform="translate(18 92)" stroke="#1267E5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">',\n        '<path d="M0 0 L6 5 L12 0"/><path d="M0 4 L6 9 L12 4"/>',\n        '</g>',\n        '<text x="48" y="101" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + priority + '</text>',\n        '<text x="300" y="101" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + assignee + '</text>',\n        '</svg>'\n      ].join(\n        ""\n      );\n\n    const dataUrl =\n      "data:image/svg+xml;base64," +\n      btoa(\n        unescape(\n          encodeURIComponent(\n            svg\n          )\n        )\n      );\n\n    const image =\n      await miro.board.createImage({\n\n        title:\n          "CUSTOM_JIRA_CARD:" +\n          jira.issueKey,\n\n        url:\n          dataUrl,\n\n        linkedTo:\n          jira.browseUrl,\n\n        x,\n        y,\n        width\n\n      });\n\n    try {\n\n      const boardInfo =\n        await miro.board.getInfo();\n\n      const registrationResponse =\n        await backendPost(\n          "/register-custom-cards",\n          {\n            boardId:\n              boardInfo.id,\n            cards: [\n              {\n                issueKey:\n                  jira.issueKey,\n                groupId:\n                  String(\n                    image.id\n                  )\n              }\n            ]\n          }\n        );\n\n      if (\n        !registrationResponse.ok\n      ) {\n        console.warn(\n          "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",\n          await registrationResponse.text()\n        );\n      }\n\n    } catch (\n      registrationError\n    ) {\n      console.warn(\n        "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",\n        registrationError\n      );\n    }\n\n    return {\n      frame:\n        image,\n      items: [\n        image\n      ]\n    };\n\n  }\n\n\n  // ========================================================\n  // STICKY -> CUSTOM CARD POSITION'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected one createCustomCardAt replacement, got {count}')
+
+          # 6. Jira -> Miro can move the single image with the existing one-item mover.
+          old = '''          (\n            read.item?.type === "app_card" ||\n            read.item?.type === "frame"\n          )\n'''
+          new = '''          (\n            read.item?.type === "app_card" ||\n            read.item?.type === "frame" ||\n            read.item?.type === "image"\n          )\n'''
+          replace_once(old, new, 'server image movement')
+
+          text = text.replace(
+              '"CUSTOM CARD EXPERIMENT grouped classic-card Miro -> Jira status sync ACTIVE"',
+              '"CUSTOM CARD EXPERIMENT single-image Miro -> Jira status sync ACTIVE"',
+              1,
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check src/worker.js
+
+      - name: Commit single-image implementation and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/apply-single-image-card.yml
+          git add src/worker.js .github/workflows/apply-single-image-card.yml
+          git commit -m "Render custom Jira cards as one movable image"
+          git push origin HEAD:fix/custom-card-single-item
