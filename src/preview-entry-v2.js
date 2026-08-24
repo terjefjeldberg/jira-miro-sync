@@ -86,7 +86,7 @@ function priorityIconSvg(priority) {
   const blue = "#1267E5";
   const gray = "#6B778C";
 
-  if (value === "highest") {
+  if (value === "blocker" || value === "highest") {
     return `<g transform="translate(18 88)" fill="none" stroke="${red}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L6 1 L12 7"/><path d="M0 12 L6 6 L12 12"/></g>`;
   }
 
@@ -102,7 +102,7 @@ function priorityIconSvg(priority) {
     return `<g transform="translate(18 91)" fill="none" stroke="${blue}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L6 8 L12 2"/></g>`;
   }
 
-  if (value === "lowest") {
+  if (value === "trivial" || value === "lowest") {
     return `<g transform="translate(18 88)" fill="none" stroke="${blue}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 1 L6 7 L12 1"/><path d="M0 6 L6 12 L12 6"/></g>`;
   }
 
