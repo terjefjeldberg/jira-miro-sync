@@ -253,6 +253,28 @@ async function refreshCustomCardImage(env, issueKey) {
   }
 
   const dataUrl = await buildCardSvgDataUrl(jira);
+  const encodedSvg = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const binarySvg = atob(encodedSvg);
+  const svgBytes = new Uint8Array(binarySvg.length);
+  for (let index = 0; index < binarySvg.length; index += 1) {
+    svgBytes[index] = binarySvg.charCodeAt(index);
+  }
+
+  const formData = new FormData();
+  formData.append(
+    "resource",
+    new Blob([svgBytes], { type: "image/svg+xml" }),
+    `${issueKey}.svg`,
+  );
+  formData.append(
+    "data",
+    new Blob(
+      [JSON.stringify({ title: `CUSTOM_JIRA_CARD:${issueKey}` })],
+      { type: "application/json" },
+    ),
+    "data.json",
+  );
+
   const response = await fetch(
     `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`,
     {
@@ -260,14 +282,8 @@ async function refreshCustomCardImage(env, issueKey) {
       headers: {
         Authorization: `Bearer ${env.MIRO_TOKEN}`,
         Accept: "application/json",
-        "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        data: {
-          title: `CUSTOM_JIRA_CARD:${issueKey}`,
-          url: dataUrl,
-        },
-      }),
+      body: formData,
     },
   );
 
@@ -276,7 +292,7 @@ async function refreshCustomCardImage(env, issueKey) {
       ok: false,
       refreshed: false,
       mapped: true,
-      stage: "refresh-patch-miro-image",
+      stage: "refresh-upload-miro-image",
       miroStatus: response.status,
       error: await response.text(),
     };
