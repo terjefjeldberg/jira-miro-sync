@@ -609,10 +609,10 @@ export default {
     const issueKey = normalizeIssueKey(body?.issueKey);
     const status = String(body?.status ?? "").trim();
 
-    // Refresh is intentionally best-effort and never turns an otherwise valid
-    // Jira -> Miro status movement into a webhook failure.
+    // Any authenticated/accepted SN webhook may carry a field-only change.
+    // The refresh helper performs its own custom-card mapping check.
     let customRefresh = null;
-    if (body?.ok && /^SN-\d+$/i.test(issueKey) && body?.custom?.mapped === true) {
+    if (body?.ok && /^SN-\d+$/i.test(issueKey)) {
       customRefresh = await refreshCustomCardImage(env, issueKey);
     }
 
