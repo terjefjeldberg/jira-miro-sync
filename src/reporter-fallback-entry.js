@@ -26,7 +26,76 @@ async function readJson(response) {
   }
 }
 
-async function readMiroUser(env, miroUserId) {
+function memberIdentity(value) {
+  if (!value) return { id: "", name: "", email: "" };
+  return {
+    id: String(value.id ?? value.memberId ?? value.user?.id ?? "").trim(),
+    name: String(value.name ?? value.displayName ?? value.user?.name ?? value.user?.displayName ?? "").trim(),
+    email: String(value.email ?? value.emailAddress ?? value.user?.email ?? value.user?.emailAddress ?? "").trim(),
+  };
+}
+
+async function readMiroBoardMember(env, miroUserId) {
+  if (!env.MIRO_TOKEN || !env.MIRO_BOARD_ID) {
+    return { ok: false, stage: "reporter-fallback-miro-board-config", reason: "Miro board configuration is missing" };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${env.MIRO_TOKEN}`,
+    Accept: "application/json",
+  };
+
+  const direct = await fetch(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/members/${encodeURIComponent(miroUserId)}`,
+    { headers },
+  );
+
+  if (direct.ok) {
+    const raw = await direct.json();
+    const identity = memberIdentity(raw);
+    if (identity.name) return { ok: true, ...identity, source: "board-member-direct" };
+  }
+
+  let cursor = "";
+  for (let page = 0; page < 20; page += 1) {
+    const url = new URL(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/members`);
+    url.searchParams.set("limit", "50");
+    if (cursor) url.searchParams.set("cursor", cursor);
+
+    const response = await fetch(url.toString(), { headers });
+    if (!response.ok) {
+      return {
+        ok: false,
+        stage: "reporter-fallback-miro-board-members",
+        reason: `Miro board member lookup failed with HTTP ${response.status}`,
+        miroStatus: response.status,
+        error: await response.text(),
+        miroCreatorId: miroUserId,
+      };
+    }
+
+    const payload = await response.json();
+    const members = Array.isArray(payload?.data) ? payload.data : [];
+    for (const member of members) {
+      const identity = memberIdentity(member);
+      if (identity.id === String(miroUserId) && identity.name) {
+        return { ok: true, ...identity, source: "board-members-list" };
+      }
+    }
+
+    cursor = String(payload?.cursor ?? "").trim();
+    if (!cursor) break;
+  }
+
+  return {
+    ok: false,
+    stage: "reporter-fallback-miro-board-member-not-found",
+    reason: `Miro creator ${miroUserId} was not found with a name in the board member API`,
+    miroCreatorId: miroUserId,
+  };
+}
+
+async function readMiroScimUser(env, miroUserId) {
   const response = await fetch(
     `https://miro.com/api/v1/scim/Users/${encodeURIComponent(miroUserId)}?attributes=id,displayName,name,userName,emails`,
     {
@@ -40,7 +109,8 @@ async function readMiroUser(env, miroUserId) {
   if (!response.ok) {
     return {
       ok: false,
-      stage: "reporter-fallback-miro-user",
+      stage: "reporter-fallback-miro-scim-user",
+      reason: `Miro SCIM user lookup failed with HTTP ${response.status}`,
       miroStatus: response.status,
       error: await response.text(),
       miroCreatorId: miroUserId,
@@ -63,14 +133,46 @@ async function readMiroUser(env, miroUserId) {
   if (!displayName) {
     return {
       ok: false,
-      stage: "reporter-fallback-miro-user-name",
-      reason: "Miro user lookup returned no display name",
+      stage: "reporter-fallback-miro-scim-name",
+      reason: "Miro SCIM user lookup returned no display name",
       miroCreatorId: miroUserId,
-      miroUser: user,
     };
   }
 
-  return { ok: true, id: miroUserId, displayName, email };
+  return { ok: true, id: miroUserId, name: displayName, email, source: "scim" };
+}
+
+async function resolveMiroUser(env, miroUserId) {
+  const boardMember = await readMiroBoardMember(env, miroUserId);
+  if (boardMember.ok) {
+    return {
+      ok: true,
+      id: miroUserId,
+      displayName: boardMember.name,
+      email: boardMember.email,
+      source: boardMember.source,
+    };
+  }
+
+  const scim = await readMiroScimUser(env, miroUserId);
+  if (scim.ok) {
+    return {
+      ok: true,
+      id: miroUserId,
+      displayName: scim.name,
+      email: scim.email,
+      source: scim.source,
+    };
+  }
+
+  return {
+    ok: false,
+    stage: "reporter-fallback-miro-user-unresolved",
+    reason: `Could not resolve Miro creator ${miroUserId}. Board member lookup: ${boardMember.reason}. SCIM lookup: ${scim.reason}.`,
+    miroCreatorId: miroUserId,
+    boardMember,
+    scim,
+  };
 }
 
 async function findJiraReporter(env, miroUser) {
@@ -96,6 +198,7 @@ async function findJiraReporter(env, miroUser) {
     return {
       ok: false,
       stage: "reporter-fallback-jira-search",
+      reason: `Jira user search failed with HTTP ${response.status}`,
       jiraStatus: response.status,
       error: await response.text(),
       miroCreatorName: miroUser.displayName,
@@ -128,8 +231,8 @@ async function findJiraReporter(env, miroUser) {
       ok: false,
       stage: "reporter-fallback-jira-match",
       reason: matches.length === 0
-        ? "No exact Jira user matched the Miro creator"
-        : "More than one exact Jira user matched the Miro creator",
+        ? `No exact Jira user matched Miro creator ${miroUser.displayName}`
+        : `More than one Jira user matched Miro creator ${miroUser.displayName}`,
       miroCreatorName: miroUser.displayName,
       candidates: candidates.map(user => user.displayName),
     };
@@ -162,6 +265,7 @@ async function updateReporter(env, issueKey, reporter) {
     return {
       ok: false,
       stage: "reporter-fallback-jira-update",
+      reason: `Jira rejected the Reporter update with HTTP ${response.status}`,
       jiraStatus: response.status,
       error: await response.text(),
       jiraReporterName: reporter.displayName,
@@ -190,14 +294,24 @@ export default {
       return reporterResponse;
     }
 
-    const miroUser = await readMiroUser(env, String(reporterError.miroCreatorId));
+    const miroUser = await resolveMiroUser(env, String(reporterError.miroCreatorId));
     if (!miroUser.ok) {
-      return jsonResponse({ ...reporterError, fallback: miroUser }, 409);
+      return jsonResponse({
+        ...reporterError,
+        stage: miroUser.stage,
+        reason: miroUser.reason,
+        fallback: miroUser,
+      }, 409);
     }
 
     const jiraReporter = await findJiraReporter(env, miroUser);
     if (!jiraReporter.ok) {
-      return jsonResponse({ ...reporterError, fallback: jiraReporter }, 409);
+      return jsonResponse({
+        ...reporterError,
+        stage: jiraReporter.stage,
+        reason: jiraReporter.reason,
+        fallback: jiraReporter,
+      }, 409);
     }
 
     const createResponse = await previewWorker.fetch(request.clone(), env, ctx);
@@ -212,10 +326,12 @@ export default {
       return jsonResponse({
         ...created,
         ok: false,
+        reason: reporterUpdate.reason,
         reporterSync: reporterUpdate,
         reporterResolvedFrom: {
           miroCreatorId: miroUser.id,
           miroCreatorName: miroUser.displayName,
+          miroCreatorSource: miroUser.source,
           jiraReporterName: jiraReporter.displayName,
         },
       }, 409);
@@ -226,7 +342,7 @@ export default {
       reporterSync: {
         ok: true,
         applied: true,
-        fallback: "miro-scim-user-id",
+        fallback: miroUser.source,
         miroCreatorId: miroUser.id,
         miroCreatorName: miroUser.displayName,
         jiraReporterAccountId: jiraReporter.accountId,
