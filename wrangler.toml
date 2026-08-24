@@ -3,7 +3,7 @@ main = "src/preview-entry-v2.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
 
-# Preview rebuild marker: 2026-08-24
+# Preview rebuild marker: 2026-08-24-2
 
 [[kv_namespaces]]
 binding = "CARD_MAP"
