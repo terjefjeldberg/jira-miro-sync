@@ -3202,9 +3202,17 @@ export default {
         [];
 
 
+      const groups =
+        await miro.board.get({
+          type:
+            "group"
+        });
+
+
       const customContainers = [
         ...frames,
-        ...appCards
+        ...appCards,
+        ...groups
       ];
 
 
@@ -3220,11 +3228,17 @@ export default {
                   container.id
                 )
               )
-            : await customSyncGetFrameSnapshot(
-                String(
-                  container.id
+            : container.type === "group"
+              ? await customSyncGetLegacyGroupSnapshot(
+                  String(
+                    container.id
+                  )
                 )
-              );
+              : await customSyncGetFrameSnapshot(
+                  String(
+                    container.id
+                  )
+                );
 
 
         if (
@@ -3879,12 +3893,12 @@ export default {
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT single-item App Card Miro -> Jira status sync ACTIVE"
+    "CUSTOM CARD EXPERIMENT grouped classic-card Miro -> Jira status sync ACTIVE"
   );
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT Jira -> Miro single-item movement ACTIVE"
+    "CUSTOM CARD EXPERIMENT Jira -> Miro grouped-card movement ACTIVE"
   );
 
 
@@ -5623,6 +5637,9 @@ export default {
     const width =
       320;
 
+    const height =
+      120;
+
 
     const cardColor =
       customCardColorForWorkType(
@@ -5630,216 +5647,426 @@ export default {
       );
 
 
-    // App Cards apply Miro's own rendering on top of the theme color.
-    // Use a stronger work-type theme here so the issue type remains obvious
-    // while preserving the original custom-card palette for legacy frames.
-    const APP_CARD_WORK_TYPE_COLORS = {
-
-      bug:
-        "#F45BD3",
-
-      improvement:
-        "#6FA8FF",
-
-      spike:
-        "#FFD84D",
-
-      "new feature":
-        "#9FE04F",
-
-      "hotfix candidate":
-        "#FF914D",
-
-      "task/config/doc/test":
-        "#4FD7CD"
-
-    };
+    const createdItems =
+      [];
 
 
-    const appCardTheme =
-      APP_CARD_WORK_TYPE_COLORS[
-        String(
-          jira.workType ?? ""
-        )
-          .trim()
-          .toLowerCase()
-      ]
-      ||
-      cardColor;
+    let group =
+      null;
 
 
-    const fieldFillColor =
-      cardColor;
-
-
-    const fields = [
-
-      {
-        value:
-          jira.issueKey,
-
-        fillColor:
-          fieldFillColor,
-
-        textColor:
-          "#1A1A1A",
-
-        tooltip:
-          "Jira issue"
-      },
-
-      {
-        value:
-          jira.priority,
-
-        fillColor:
-          fieldFillColor,
-
-        textColor:
-          "#1A1A1A",
-
-        tooltip:
-          "Priority"
-      },
-
-      {
-        value:
-          jira.assignee,
-
-        fillColor:
-          fieldFillColor,
-
-        textColor:
-          "#1A1A1A",
-
-        tooltip:
-          "Assignee"
-      }
-
-    ];
-
-
-    if (
-      jira.priorityIconUrl
-    ) {
-
-      fields[1].iconUrl =
-        jira.priorityIconUrl;
-
-      fields[1].iconShape =
-        "square";
-
-    }
-
-
-    const appCard =
-      await miro.board.createAppCard({
-
-        title:
-          jira.summary,
-
-        linkedTo:
-          jira.browseUrl,
-
-        style: {
-
-          cardTheme:
-            appCardTheme,
-
-          fillBackground:
-            true
-
-        },
-
-        fields,
-
-        x,
-
-        y,
-
-        width,
-
-        status:
-          "connected"
-
-      });
-
-
-    // Register immediately so Jira -> Miro can move this exact
-    // single item without waiting for a later board scan.
     try {
 
-      const boardInfo =
-        await miro.board.getInfo();
+      const background =
+        await miro.board.createShape({
 
+          shape:
+            "rectangle",
 
-      const registrationResponse =
-        await backendPost(
+          x,
 
-          "/register-custom-cards",
+          y,
 
-          {
+          width,
 
-            boardId:
-              boardInfo.id,
+          height,
 
-            cards: [
+          style: {
 
-              {
-                issueKey:
-                  jira.issueKey,
+            fillColor:
+              cardColor,
 
-                // Existing backend field name retained for
-                // compatibility. The value is now one App Card ID.
-                groupId:
-                  String(
-                    appCard.id
-                  )
-              }
+            fillOpacity:
+              1,
 
-            ]
+            borderOpacity:
+              0,
+
+            borderWidth:
+              0
 
           }
+
+        });
+
+
+      createdItems.push(
+        background
+      );
+
+
+      const issueKeyText =
+        await miro.board.createText({
+
+          content:
+            "<strong>" +
+            escapeHtml(
+              jira.issueKey
+            ) +
+            "</strong>",
+
+          x:
+            x - 122,
+
+          y:
+            y - 45,
+
+          width:
+            60,
+
+          style: {
+
+            color:
+              "#1A1A1A",
+
+            fillColor:
+              "transparent",
+
+            fontFamily:
+              "arial",
+
+            fontSize:
+              10,
+
+            textAlign:
+              "left"
+
+          }
+
+        });
+
+
+      createdItems.push(
+        issueKeyText
+      );
+
+
+      const jiraLinkText =
+        await miro.board.createText({
+
+          content:
+            '<a href="' +
+            escapeHtml(
+              jira.browseUrl
+            ) +
+            '">Jira ↗</a>',
+
+          linkedTo:
+            jira.browseUrl,
+
+          x:
+            x + 112,
+
+          y:
+            y - 45,
+
+          width:
+            70,
+
+          style: {
+
+            color:
+              "#1A1A1A",
+
+            fillColor:
+              "transparent",
+
+            fontFamily:
+              "arial",
+
+            fontSize:
+              10,
+
+            textAlign:
+              "right"
+
+          }
+
+        });
+
+
+      createdItems.push(
+        jiraLinkText
+      );
+
+
+      const summaryText =
+        await miro.board.createText({
+
+          content:
+            "<strong>" +
+            escapeHtml(
+              jira.summary
+            ) +
+            "</strong>",
+
+          x,
+
+          y:
+            y - 10,
+
+          width:
+            280,
+
+          style: {
+
+            color:
+              "#1A1A1A",
+
+            fillColor:
+              "transparent",
+
+            fontFamily:
+              "arial",
+
+            fontSize:
+              titleFontSize(
+                jira.summary
+              ),
+
+            textAlign:
+              "left"
+
+          }
+
+        });
+
+
+      createdItems.push(
+        summaryText
+      );
+
+
+      const priorityIcon =
+        await createPriorityIcon(
+
+          jira,
+
+          x - 138,
+
+          y + 42
 
         );
 
 
       if (
-        !registrationResponse.ok
+        priorityIcon
       ) {
 
-        console.warn(
-          "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",
-          await registrationResponse.text()
+        createdItems.push(
+          priorityIcon
         );
 
       }
 
 
-    } catch (
-      registrationError
-    ) {
+      const priorityText =
+        await miro.board.createText({
 
-      console.warn(
-        "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",
-        registrationError
+          content:
+            escapeHtml(
+              jira.priority
+            ),
+
+          x:
+            x - 72,
+
+          y:
+            y + 42,
+
+          width:
+            94,
+
+          style: {
+
+            color:
+              "#1A1A1A",
+
+            fillColor:
+              "transparent",
+
+            fontFamily:
+              "arial",
+
+            fontSize:
+              10,
+
+            textAlign:
+              "left"
+
+          }
+
+        });
+
+
+      createdItems.push(
+        priorityText
       );
 
+
+      const assigneeText =
+        await miro.board.createText({
+
+          content:
+            escapeHtml(
+              jira.assignee
+            ),
+
+          x:
+            x + 62,
+
+          y:
+            y + 42,
+
+          width:
+            160,
+
+          style: {
+
+            color:
+              "#1A1A1A",
+
+            fillColor:
+              "transparent",
+
+            fontFamily:
+              "arial",
+
+            fontSize:
+              10,
+
+            textAlign:
+              "right"
+
+          }
+
+        });
+
+
+      createdItems.push(
+        assigneeText
+      );
+
+
+      group =
+        await miro.board.group({
+
+          items:
+            createdItems
+
+        });
+
+
+      try {
+
+        const boardInfo =
+          await miro.board.getInfo();
+
+
+        const registrationResponse =
+          await backendPost(
+
+            "/register-custom-cards",
+
+            {
+
+              boardId:
+                boardInfo.id,
+
+              cards: [
+
+                {
+                  issueKey:
+                    jira.issueKey,
+
+                  groupId:
+                    String(
+                      group.id
+                    )
+                }
+
+              ]
+
+            }
+
+          );
+
+
+        if (
+          !registrationResponse.ok
+        ) {
+
+          console.warn(
+            "CUSTOM CARD STICKY CONVERSION: grouped card mapping registration failed",
+            await registrationResponse.text()
+          );
+
+        }
+
+
+      } catch (
+        registrationError
+      ) {
+
+        console.warn(
+          "CUSTOM CARD STICKY CONVERSION: grouped card mapping registration failed",
+          registrationError
+        );
+
+      }
+
+
+      return {
+
+        frame:
+          group,
+
+        items:
+          createdItems
+
+      };
+
+
+    } catch (
+      error
+    ) {
+
+      console.error(
+        "CUSTOM CARD STICKY CONVERSION: grouped card creation failed, cleaning up",
+        error
+      );
+
+
+      if (
+        group
+      ) {
+
+        try {
+          await group.ungroup();
+        } catch {}
+
+      }
+
+
+      for (
+        const item
+        of createdItems
+      ) {
+
+        try {
+
+          await miro.board.remove(
+            item
+          );
+
+        } catch {}
+
+      }
+
+
+      throw error;
+
     }
-
-
-    // Keep the old return shape for the surrounding conversion
-    // code. The frame property now points to the single App Card item.
-    return {
-
-      frame:
-        appCard,
-
-      items: [
-        appCard
-      ]
-
-    };
 
   }
 
@@ -11166,77 +11393,89 @@ export default {
           currentX;
 
 
-        for (
-          const item
-          of childItems
+        const moveResults =
+          await Promise.all(
+
+            childItems.map(
+              async item => {
+
+                const itemX =
+                  item.position?.x;
+
+                const itemY =
+                  item.position?.y;
+
+
+                if (
+                  typeof itemX !== "number" ||
+                  typeof itemY !== "number"
+                ) {
+
+                  return {
+                    ok: false,
+                    itemId: String(item.id),
+                    reason: "invalid-geometry"
+                  };
+
+                }
+
+
+                const response =
+                  await patchMiroItemPosition(
+
+                    String(
+                      item.id
+                    ),
+
+                    itemX + deltaX,
+
+                    itemY
+
+                  );
+
+
+                return {
+                  ok: response.ok,
+                  itemId: String(item.id),
+                  status: response.status,
+                  error: response.ok ? null : await response.text()
+                };
+
+              }
+            )
+
+          );
+
+
+        const failedMove =
+          moveResults.find(
+            result =>
+              !result.ok
+          );
+
+
+        if (
+          failedMove
         ) {
 
-          const x =
-            item.position?.x;
+          return {
 
-          const y =
-            item.position?.y;
+            ok:
+              false,
 
+            stage:
+              "custom-group-parallel-move",
 
-          if (
-            typeof x !== "number" ||
-            typeof y !== "number"
-          ) {
+            itemId:
+              failedMove.itemId,
 
-            return {
+            miroStatus:
+              failedMove.status ?? null,
 
-              ok:
-                false,
+            error:
+              failedMove.error ?? failedMove.reason
 
-              stage:
-                "custom-legacy-child-geometry",
-
-              itemId:
-                item.id
-
-            };
-
-          }
-
-
-          const patchResponse =
-            await patchMiroItemPosition(
-
-              String(
-                item.id
-              ),
-
-              x + deltaX,
-
-              y
-
-            );
-
-
-          if (
-            !patchResponse.ok
-          ) {
-
-            return {
-
-              ok:
-                false,
-
-              stage:
-                "custom-legacy-move",
-
-              itemId:
-                item.id,
-
-              miroStatus:
-                patchResponse.status,
-
-              error:
-                await patchResponse.text()
-
-            };
-
-          }
+          };
 
         }
 
