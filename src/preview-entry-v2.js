@@ -66,13 +66,119 @@ function svgEscape(value) {
     .replace(/'/g, "&apos;");
 }
 
-function titleFontSize(value) {
-  const length = String(value ?? "").trim().length;
-  if (length <= 20) return 20;
-  if (length <= 35) return 17;
-  if (length <= 50) return 15;
-  if (length <= 70) return 13;
-  return 11;
+function estimateTitleTextWidth(text, fontSize) {
+  const value = String(text ?? "");
+  let units = 0;
+
+  for (const char of value) {
+    if (char === " ") units += 0.28;
+    else if (/[ilI1.,'!:;|]/.test(char)) units += 0.28;
+    else if (/[mwMW@#%&]/.test(char)) units += 0.9;
+    else if (/[A-Z0-9]/.test(char)) units += 0.62;
+    else units += 0.54;
+  }
+
+  return units * fontSize;
+}
+
+function splitTitleWord(word, fontSize, maxWidth) {
+  const chunks = [];
+  let current = "";
+
+  for (const char of String(word ?? "")) {
+    const candidate = `${current}${char}`;
+    if (current && estimateTitleTextWidth(candidate, fontSize) > maxWidth) {
+      chunks.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [String(word ?? "")];
+}
+
+function wrapTitleLines(text, fontSize, maxWidth) {
+  const words = String(text ?? "").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const parts = estimateTitleTextWidth(word, fontSize) > maxWidth
+      ? splitTitleWord(word, fontSize, maxWidth)
+      : [word];
+
+    for (const part of parts) {
+      const candidate = currentLine ? `${currentLine} ${part}` : part;
+
+      if (estimateTitleTextWidth(candidate, fontSize) <= maxWidth) {
+        currentLine = candidate;
+      } else {
+        if (currentLine) lines.push(currentLine);
+        currentLine = part;
+      }
+    }
+  }
+
+  if (currentLine) lines.push(currentLine);
+  return lines.length ? lines : [""];
+}
+
+function buildTitleLayout(text) {
+  // Reserved middle zone. The top row is reserved for issue key/Jira link,
+  // and the bottom row is reserved for priority/assignee.
+  const titleBox = {
+    x: 20,
+    y: 26,
+    width: 280,
+    height: 56,
+  };
+
+  const minFontSize = 10;
+  const maxFontSize = 44;
+  const maxLines = 4;
+  const lineHeightFactor = 1.05;
+
+  for (let fontSize = maxFontSize; fontSize >= minFontSize; fontSize -= 1) {
+    const lines = wrapTitleLines(text, fontSize, titleBox.width);
+    const lineHeight = fontSize * lineHeightFactor;
+    const totalHeight = lines.length * lineHeight;
+
+    if (lines.length <= maxLines && totalHeight <= titleBox.height) {
+      const centerX = titleBox.x + titleBox.width / 2;
+      const startY =
+        titleBox.y +
+        (titleBox.height - totalHeight) / 2 +
+        fontSize * 0.82;
+
+      return {
+        centerX,
+        startY,
+        fontSize,
+        lineHeight,
+        lines,
+      };
+    }
+  }
+
+  const fontSize = minFontSize;
+  const lines = wrapTitleLines(text, fontSize, titleBox.width).slice(0, maxLines);
+  const lineHeight = fontSize * lineHeightFactor;
+  const totalHeight = lines.length * lineHeight;
+  const centerX = titleBox.x + titleBox.width / 2;
+  const startY =
+    titleBox.y +
+    (titleBox.height - totalHeight) / 2 +
+    fontSize * 0.82;
+
+  return {
+    centerX,
+    startY,
+    fontSize,
+    lineHeight,
+    lines,
+  };
 }
 
 function cardColorForWorkType(workType) {
@@ -183,18 +289,27 @@ async function readJiraCardData(env, issueKey) {
 async function buildCardSvgDataUrl(jira) {
   const cardColor = cardColorForWorkType(jira.workType);
   const issueKey = svgEscape(jira.issueKey);
-  const summary = svgEscape(jira.summary);
   const priority = svgEscape(jira.priority);
   const assignee = svgEscape(jira.assignee);
-  const titleSize = titleFontSize(jira.summary);
+  const titleLayout = buildTitleLayout(jira.summary);
   const priorityIcon = priorityIconSvg(jira.priority);
+
+  const titleSvg = [
+    `<text x="${titleLayout.centerX}" y="${titleLayout.startY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="${titleLayout.fontSize}" font-weight="700" fill="#1A1A1A">`,
+    ...titleLayout.lines.map((line, index) =>
+      index === 0
+        ? `<tspan x="${titleLayout.centerX}">${svgEscape(line)}</tspan>`
+        : `<tspan x="${titleLayout.centerX}" dy="${titleLayout.lineHeight}">${svgEscape(line)}</tspan>`,
+    ),
+    '</text>',
+  ].join("");
 
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',
     `<rect x="2" y="2" width="316" height="116" rx="6" fill="${cardColor}" stroke="#3F4854" stroke-width="2"/>`,
     `<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">${issueKey}</text>`,
     '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',
-    `<text x="20" y="60" font-family="Arial, sans-serif" font-size="${titleSize}" font-weight="700" fill="#1A1A1A">${summary}</text>`,
+    titleSvg,
     priorityIcon,
     `<text x="40" y="101" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">${priority}</text>`,
     `<text x="300" y="101" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">${assignee}</text>`,
