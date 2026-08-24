@@ -1,0 +1,78 @@
+name: Fix image custom-card canvas position once
+
+on:
+  push:
+    branches:
+      - fix/custom-card-single-item
+    paths:
+      - .github/workflows/fix-image-canvas-position-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/custom-card-single-item
+
+      - name: Restore active-board guard with absolute canvas coordinates
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('src/worker.js')
+          text = path.read_text(encoding='utf-8')
+
+          marker = '''      async function patchMiroItemPosition(\n        itemId,\n        x,\n        y\n      ) {\n'''
+
+          helper = '''      async function resolveCanvasPosition(\n        item,\n        seenIds = new Set()\n      ) {\n\n        const itemId =\n          String(\n            item?.id ??\n            ""\n          );\n\n        if (\n          itemId &&\n          seenIds.has(\n            itemId\n          )\n        ) {\n          return null;\n        }\n\n        if (\n          itemId\n        ) {\n          seenIds.add(\n            itemId\n          );\n        }\n\n        const x =\n          item?.position?.x;\n\n        const y =\n          item?.position?.y;\n\n        if (\n          typeof x !== "number" ||\n          typeof y !== "number"\n        ) {\n          return null;\n        }\n\n        const relativeTo =\n          String(\n            item?.position?.relativeTo ??\n            "canvas_center"\n          );\n\n        const parentId =\n          String(\n            item?.parent?.id ??\n            ""\n          ).trim();\n\n        if (\n          !parentId ||\n          relativeTo === "canvas_center"\n        ) {\n          return {\n            x,\n            y\n          };\n        }\n\n        const parentRead =\n          await readMiroItem(\n            parentId\n          );\n\n        if (\n          !parentRead.found ||\n          parentRead.ok === false\n        ) {\n          return null;\n        }\n\n        const parentCanvas =\n          await resolveCanvasPosition(\n            parentRead.item,\n            seenIds\n          );\n\n        if (\n          !parentCanvas\n        ) {\n          return null;\n        }\n\n        if (\n          relativeTo === "parent_center"\n        ) {\n          return {\n            x:\n              parentCanvas.x + x,\n            y:\n              parentCanvas.y + y\n          };\n        }\n\n        if (\n          relativeTo === "parent_top_left"\n        ) {\n\n          const parentWidth =\n            parentRead.item?.geometry?.width;\n\n          const parentHeight =\n            parentRead.item?.geometry?.height;\n\n          if (\n            typeof parentWidth !== "number" ||\n            typeof parentHeight !== "number"\n          ) {\n            return null;\n          }\n\n          return {\n            x:\n              parentCanvas.x -\n              parentWidth / 2 +\n              x,\n            y:\n              parentCanvas.y -\n              parentHeight / 2 +\n              y\n          };\n\n        }\n\n        return null;\n\n      }\n\n\n'''
+
+          if helper not in text:
+              if marker not in text:
+                  raise SystemExit('Could not find patchMiroItemPosition marker')
+              text = text.replace(marker, helper + marker, 1)
+
+          old = '''      async function moveCustomFrame(\n        frameId,\n        frameItem\n      ) {\n\n        const currentX =\n          frameItem.position?.x;\n\n        const currentY =\n          frameItem.position?.y;\n\n        const cardWidth =\n          frameItem.geometry?.width;\n\n\n        if (\n          typeof currentX !== "number" ||\n          typeof currentY !== "number" ||\n          typeof cardWidth !== "number" ||\n          cardWidth <= 0\n        ) {\n'''
+
+          new = '''      async function moveCustomFrame(\n        frameId,\n        frameItem\n      ) {\n\n        const canvasPosition =\n          frameItem.type === "image"\n            ? await resolveCanvasPosition(\n                frameItem\n              )\n            : {\n                x:\n                  frameItem.position?.x,\n                y:\n                  frameItem.position?.y\n              };\n\n        const currentX =\n          canvasPosition?.x;\n\n        const currentY =\n          canvasPosition?.y;\n\n        const cardWidth =\n          frameItem.geometry?.width;\n\n\n        if (\n          typeof currentX !== "number" ||\n          typeof currentY !== "number" ||\n          typeof cardWidth !== "number" ||\n          cardWidth <= 0\n        ) {\n'''
+
+          if old not in text:
+              raise SystemExit('Could not find moveCustomFrame geometry block')
+          text = text.replace(old, new, 1)
+
+          old = '''        // Image-based custom cards can be children of a Miro frame.\n        // In that case REST x/y coordinates are parent-relative rather\n        // than canvas-relative, so the generic active-board parking\n        // check incorrectly marks a visible card as parked. Exact KV\n        // mapping makes it safe to move this single image item directly.\n        if (\n          frameItem.type !== "image" &&\n          !insideActiveBoard(\n            currentX,\n            currentY\n          )\n        ) {\n'''
+
+          new = '''        // Keep the active-board safety rule for every custom card.\n        // Image cards may be children of a frame, so currentX/currentY\n        // above are first resolved to absolute canvas coordinates.\n        if (\n          !insideActiveBoard(\n            currentX,\n            currentY\n          )\n        ) {\n'''
+
+          if old not in text:
+              raise SystemExit('Could not find image parked exception block')
+          text = text.replace(old, new, 1)
+
+          old = '''                    position: {\n                      x:\n                        targetColumn.targetX,\n                      y:\n                        currentY,\n                      origin:\n                        "center"\n                    }\n'''
+
+          new = '''                    position: {\n                      x:\n                        targetColumn.targetX,\n                      y:\n                        currentY,\n                      origin:\n                        "center"\n                    }\n'''
+
+          # This block intentionally stays textually identical: currentY is now
+          # absolute canvas Y because it comes from resolveCanvasPosition().
+          if old not in text:
+              raise SystemExit('Could not find image move position block')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check src/worker.js
+
+      - name: Commit fix and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/fix-image-canvas-position-once.yml
+          git add src/worker.js .github/workflows/fix-image-canvas-position-once.yml
+          git commit -m "Restore active-board guard for image custom cards"
+          git push origin HEAD:fix/custom-card-single-item
