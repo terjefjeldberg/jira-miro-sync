@@ -192,7 +192,7 @@ async function buildCardSvgDataUrl(jira) {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',
     '<rect x="6" y="8" width="308" height="106" rx="6" fill="#091E42" opacity="0.14"/>',
-    `<rect x="2" y="2" width="316" height="116" rx="6" fill="${cardColor}" stroke="#253858" stroke-opacity="0.22" stroke-width="2"/>`,
+    `<rect x="2" y="2" width="316" height="116" rx="6" fill="${cardColor}" stroke="#000000" stroke-width="2"/>`,
     `<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">${issueKey}</text>`,
     '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',
     `<text x="20" y="60" font-family="Arial, sans-serif" font-size="${titleSize}" font-weight="700" fill="#1A1A1A">${summary}</text>`,
