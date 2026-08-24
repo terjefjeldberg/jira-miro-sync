@@ -122,6 +122,21 @@ async function resolveJiraReporter(env, displayName) {
   };
 }
 
+function jiraErrorMessage(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    const parts = [];
+    if (Array.isArray(parsed?.errorMessages)) parts.push(...parsed.errorMessages.filter(Boolean));
+    if (parsed?.errors && typeof parsed.errors === "object") {
+      for (const [field, message] of Object.entries(parsed.errors)) {
+        if (message) parts.push(`${field}: ${message}`);
+      }
+    }
+    if (parts.length) return parts.join(" | ");
+  } catch {}
+  return String(raw ?? "").trim();
+}
+
 async function updateReporter(env, issueKey, reporter) {
   const { base, headers } = jiraConfig(env);
   const response = await fetch(`${base}/issue/${encodeURIComponent(issueKey)}`, {
@@ -131,12 +146,16 @@ async function updateReporter(env, issueKey, reporter) {
   });
 
   if (!response.ok) {
+    const rawError = await response.text();
+    const detail = jiraErrorMessage(rawError);
     return {
       ok: false,
       stage: "reporter-jira-update",
-      reason: `Jira rejected Reporter update with HTTP ${response.status}`,
+      reason: detail
+        ? `Jira rejected Reporter update with HTTP ${response.status}: ${detail}`
+        : `Jira rejected Reporter update with HTTP ${response.status}`,
       jiraStatus: response.status,
-      error: await response.text(),
+      error: rawError,
     };
   }
   return { ok: true };
