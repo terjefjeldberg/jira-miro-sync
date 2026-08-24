@@ -8,6 +8,13 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
+const FIXED_MIRO_USERS = {
+  "3458764589815876301": {
+    displayName: "Kristoffer Rask",
+    email: "",
+  },
+};
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -143,6 +150,17 @@ async function readMiroScimUser(env, miroUserId) {
 }
 
 async function resolveMiroUser(env, miroUserId) {
+  const fixed = FIXED_MIRO_USERS[String(miroUserId)];
+  if (fixed?.displayName) {
+    return {
+      ok: true,
+      id: String(miroUserId),
+      displayName: fixed.displayName,
+      email: fixed.email || "",
+      source: "fixed-mapping",
+    };
+  }
+
   const boardMember = await readMiroBoardMember(env, miroUserId);
   if (boardMember.ok) {
     return {
