@@ -57,6 +57,16 @@ function jsonResponseLike(original, data) {
   });
 }
 
+function responseWithText(original, text) {
+  const headers = new Headers(original.headers);
+  headers.delete("Content-Length");
+  return new Response(text, {
+    status: original.status,
+    statusText: original.statusText,
+    headers,
+  });
+}
+
 function svgEscape(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -245,6 +255,324 @@ async function readMiroItem(env, itemId) {
   }
 
   return { ok: true, item: await response.json() };
+}
+
+function miroUserIdentity(value) {
+  if (!value) return { id: "", name: "", email: "" };
+
+  if (typeof value === "string") {
+    return { id: value.trim(), name: "", email: "" };
+  }
+
+  return {
+    id: String(value.id ?? value.memberId ?? value.user?.id ?? "").trim(),
+    name: String(
+      value.name ??
+      value.displayName ??
+      value.user?.name ??
+      value.user?.displayName ??
+      "",
+    ).trim(),
+    email: String(
+      value.email ??
+      value.emailAddress ??
+      value.user?.email ??
+      value.user?.emailAddress ??
+      "",
+    ).trim(),
+  };
+}
+
+async function readMiroBoardMember(env, memberId) {
+  if (!memberId || !env.MIRO_TOKEN || !env.MIRO_BOARD_ID) {
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/members/${encodeURIComponent(memberId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${env.MIRO_TOKEN}`,
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!response.ok) return null;
+  return await response.json();
+}
+
+async function resolveStickyCreator(env, stickyId, claimedCreatedBy) {
+  const normalizedStickyId = String(stickyId ?? "").trim();
+  const claimedCreatorId = String(claimedCreatedBy ?? "").trim();
+
+  if (!normalizedStickyId) {
+    return {
+      ok: false,
+      stage: "reporter-missing-sticky-id",
+      reason: "Sticky ID was not supplied by the Miro panel",
+    };
+  }
+
+  if (!env.MIRO_TOKEN || !env.MIRO_BOARD_ID) {
+    return {
+      ok: false,
+      stage: "reporter-miro-config",
+      reason: "Miro REST configuration is missing",
+    };
+  }
+
+  const itemResponse = await fetch(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items/${encodeURIComponent(normalizedStickyId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${env.MIRO_TOKEN}`,
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!itemResponse.ok) {
+    return {
+      ok: false,
+      stage: "reporter-read-miro-sticky",
+      miroStatus: itemResponse.status,
+      error: await itemResponse.text(),
+    };
+  }
+
+  const item = await itemResponse.json();
+  if (item?.type !== "sticky_note") {
+    return {
+      ok: false,
+      stage: "reporter-verify-miro-sticky",
+      reason: "The supplied Miro item is not a sticky note",
+      itemType: item?.type ?? null,
+    };
+  }
+
+  let creator = miroUserIdentity(item.createdBy);
+
+  if (
+    claimedCreatorId &&
+    creator.id &&
+    claimedCreatorId !== creator.id
+  ) {
+    return {
+      ok: false,
+      stage: "reporter-verify-created-by",
+      reason: "Miro createdBy did not match the selected sticky",
+      claimedCreatorId,
+      actualCreatorId: creator.id,
+    };
+  }
+
+  if (!creator.name && creator.id) {
+    const member = await readMiroBoardMember(env, creator.id);
+    if (member) {
+      const memberIdentity = miroUserIdentity(member);
+      creator = {
+        id: creator.id || memberIdentity.id,
+        name: memberIdentity.name,
+        email: memberIdentity.email,
+      };
+    }
+  }
+
+  if (!creator.id) {
+    return {
+      ok: false,
+      stage: "reporter-miro-creator-id",
+      reason: "Miro did not return a creator ID for the sticky note",
+    };
+  }
+
+  if (!creator.name) {
+    return {
+      ok: false,
+      stage: "reporter-miro-creator-name",
+      reason: "Could not resolve the Miro creator name",
+      miroCreatorId: creator.id,
+    };
+  }
+
+  return {
+    ok: true,
+    creator,
+  };
+}
+
+async function findJiraReporter(env, creator) {
+  if (!env.JIRA_API_TOKEN || !env.JIRA_CLOUD_ID) {
+    return {
+      ok: false,
+      stage: "reporter-jira-config",
+      reason: "Jira API configuration is missing",
+    };
+  }
+
+  const jiraBase =
+    `https://api.atlassian.com/ex/jira/${encodeURIComponent(env.JIRA_CLOUD_ID)}/rest/api/3`;
+
+  const searchResponse = await fetch(
+    `${jiraBase}/user/assignable/search?project=SN&query=${encodeURIComponent(creator.name)}&maxResults=50`,
+    {
+      headers: {
+        Authorization: `Bearer ${env.JIRA_API_TOKEN}`,
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!searchResponse.ok) {
+    return {
+      ok: false,
+      stage: "reporter-search-jira-user",
+      jiraStatus: searchResponse.status,
+      error: await searchResponse.text(),
+      miroCreatorName: creator.name,
+    };
+  }
+
+  const users = await searchResponse.json();
+  const candidates = Array.isArray(users)
+    ? users.filter(
+        user =>
+          user?.active !== false &&
+          String(user?.accountType ?? "atlassian") !== "app" &&
+          String(user?.accountId ?? "").trim(),
+      )
+    : [];
+
+  const normalizedName = creator.name.toLocaleLowerCase();
+  const exactNameMatches = candidates.filter(
+    user =>
+      String(user?.displayName ?? "")
+        .trim()
+        .toLocaleLowerCase() === normalizedName,
+  );
+
+  let exactMatches = exactNameMatches;
+
+  if (creator.email) {
+    const normalizedEmail = creator.email.toLocaleLowerCase();
+    const exactEmailMatches = candidates.filter(
+      user =>
+        String(user?.emailAddress ?? "")
+          .trim()
+          .toLocaleLowerCase() === normalizedEmail,
+    );
+
+    if (exactEmailMatches.length === 1) {
+      exactMatches = exactEmailMatches;
+    }
+  }
+
+  if (exactMatches.length !== 1) {
+    return {
+      ok: false,
+      stage: "reporter-match-jira-user",
+      reason:
+        exactMatches.length === 0
+          ? "No exact assignable Jira user matched the Miro creator"
+          : "More than one exact Jira user matched the Miro creator",
+      miroCreatorId: creator.id,
+      miroCreatorName: creator.name,
+      matches: exactMatches.map(user => ({
+        accountId: user.accountId,
+        displayName: user.displayName,
+      })),
+      searchCandidates: candidates.map(user => user.displayName),
+    };
+  }
+
+  const user = exactMatches[0];
+  return {
+    ok: true,
+    accountId: String(user.accountId),
+    displayName: String(user.displayName ?? creator.name),
+    miroCreatorId: creator.id,
+    miroCreatorName: creator.name,
+  };
+}
+
+async function setReporterFromStickyCreator(
+  env,
+  issueKey,
+  stickyId,
+  claimedCreatedBy,
+) {
+  const creatorResult = await resolveStickyCreator(
+    env,
+    stickyId,
+    claimedCreatedBy,
+  );
+
+  if (!creatorResult.ok) return creatorResult;
+
+  const reporterResult = await findJiraReporter(env, creatorResult.creator);
+  if (!reporterResult.ok) return reporterResult;
+
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${encodeURIComponent(env.JIRA_CLOUD_ID)}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${env.JIRA_API_TOKEN}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: {
+          reporter: {
+            accountId: reporterResult.accountId,
+          },
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      stage: "reporter-update-jira-issue",
+      jiraStatus: response.status,
+      error: await response.text(),
+      miroCreatorId: reporterResult.miroCreatorId,
+      miroCreatorName: reporterResult.miroCreatorName,
+      jiraReporterAccountId: reporterResult.accountId,
+      jiraReporterName: reporterResult.displayName,
+    };
+  }
+
+  return {
+    ok: true,
+    applied: true,
+    miroCreatorId: reporterResult.miroCreatorId,
+    miroCreatorName: reporterResult.miroCreatorName,
+    jiraReporterAccountId: reporterResult.accountId,
+    jiraReporterName: reporterResult.displayName,
+  };
+}
+
+async function injectStickyCreatorIntoPanel(baseResponse) {
+  if (!baseResponse.ok) return baseResponse;
+
+  const html = await baseResponse.clone().text();
+  const original = `              workType:\n                detectedWorkType\n\n            }`;
+  const replacement = `              workType:\n                detectedWorkType,\n\n              stickyId:\n                String(sticky.id),\n\n              createdBy:\n                String(sticky.createdBy || \"\")\n\n            }`;
+
+  if (!html.includes(original)) {
+    console.warn(
+      "MIRO REPORTER SYNC: could not inject sticky creator fields into panel HTML",
+    );
+    return baseResponse;
+  }
+
+  return responseWithText(
+    baseResponse,
+    html.replace(original, replacement),
+  );
 }
 
 async function readJiraCardData(env, issueKey) {
@@ -713,6 +1041,66 @@ async function moveParkedCustomImage(env, issueKey, status) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/miro-panel") {
+      const baseResponse = await baseWorker.fetch(request, env, ctx);
+      return await injectStickyCreatorIntoPanel(baseResponse);
+    }
+
+    if (request.method === "POST" && url.pathname === "/sticky-to-jira") {
+      let requestBody = null;
+
+      try {
+        requestBody = await request.clone().json();
+      } catch {
+        // The base worker owns validation for malformed JSON.
+      }
+
+      const baseResponse = await baseWorker.fetch(request.clone(), env, ctx);
+
+      let result;
+      try {
+        result = await baseResponse.clone().json();
+      } catch {
+        return baseResponse;
+      }
+
+      if (
+        !baseResponse.ok ||
+        !result?.ok ||
+        !result?.created ||
+        !/^SN-\d+$/i.test(String(result?.issueKey ?? ""))
+      ) {
+        return baseResponse;
+      }
+
+      let reporterSync;
+      try {
+        reporterSync = await setReporterFromStickyCreator(
+          env,
+          normalizeIssueKey(result.issueKey),
+          requestBody?.stickyId,
+          requestBody?.createdBy,
+        );
+      } catch (error) {
+        reporterSync = {
+          ok: false,
+          stage: "reporter-unexpected-error",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      console.log(
+        "MIRO STICKY CREATOR -> JIRA REPORTER:",
+        normalizeIssueKey(result.issueKey),
+        reporterSync,
+      );
+
+      return jsonResponseLike(baseResponse, {
+        ...result,
+        reporterSync,
+      });
+    }
 
     if (request.method !== "POST" || url.pathname !== "/") {
       return baseWorker.fetch(request, env, ctx);
