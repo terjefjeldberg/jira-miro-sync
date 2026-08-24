@@ -2124,6 +2124,71 @@ export default {
   }
 
 
+  async function customSyncGetImageSnapshot(imageId) {
+
+    const image =
+      await miro.board.getById(
+        imageId
+      );
+
+    if (
+      !image ||
+      image.type !== "image"
+    ) {
+      return null;
+    }
+
+    const title =
+      String(
+        image.title ||
+        ""
+      ).trim();
+
+    const match =
+      title.match(
+        /^CUSTOM_JIRA_CARD:(SN-\\d+)$/i
+      );
+
+    if (
+      !match
+    ) {
+      return null;
+    }
+
+    const issueKey =
+      match[1].toUpperCase();
+
+    return {
+
+      container:
+        image,
+
+      containerType:
+        "image",
+
+      items: [
+        image
+      ],
+
+      issueKey,
+
+      cardX:
+        image.x,
+
+      cardY:
+        image.y,
+
+      cardWidth:
+        image.width,
+
+      cardHeight:
+        image.height
+
+    };
+
+  }
+
+
   async function customSyncGetFrameSnapshot(frameId) {
 
     const frame =
@@ -2310,6 +2375,17 @@ export default {
     ) {
 
       return await customSyncGetAppCardSnapshot(
+        containerId
+      );
+
+    }
+
+
+    if (
+      item.type === "image"
+    ) {
+
+      return await customSyncGetImageSnapshot(
         containerId
       );
 
@@ -3189,6 +3265,13 @@ export default {
         });
 
 
+      const images =
+        await miro.board.get({
+          type:
+            "image"
+        });
+
+
       const frames =
         await miro.board.get({
           type:
@@ -3212,7 +3295,8 @@ export default {
       const customContainers = [
         ...frames,
         ...appCards,
-        ...groups
+        ...groups,
+        ...images
       ];
 
 
@@ -3228,17 +3312,23 @@ export default {
                   container.id
                 )
               )
-            : container.type === "group"
-              ? await customSyncGetLegacyGroupSnapshot(
+            : container.type === "image"
+              ? await customSyncGetImageSnapshot(
                   String(
                     container.id
                   )
                 )
-              : await customSyncGetFrameSnapshot(
-                  String(
-                    container.id
+              : container.type === "group"
+                ? await customSyncGetLegacyGroupSnapshot(
+                    String(
+                      container.id
+                    )
                   )
-                );
+                : await customSyncGetFrameSnapshot(
+                    String(
+                      container.id
+                    )
+                  );
 
 
         if (
@@ -3705,7 +3795,8 @@ export default {
 
         if (
           item.type === "frame" ||
-          item.type === "app_card"
+          item.type === "app_card" ||
+          item.type === "image"
         ) {
 
           candidateContainerIds.add(
@@ -3893,7 +3984,7 @@ export default {
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT grouped classic-card Miro -> Jira status sync ACTIVE"
+    "CUSTOM CARD EXPERIMENT single-image Miro -> Jira status sync ACTIVE"
   );
 
 
@@ -5640,433 +5731,145 @@ export default {
     const height =
       120;
 
-
     const cardColor =
       customCardColorForWorkType(
         jira.workType
       );
 
+    function svgEscape(value) {
 
-    const createdItems =
-      [];
+      return String(
+        value ??
+        ""
+      )
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
 
+    }
 
-    let group =
-      null;
+    const summary =
+      svgEscape(
+        jira.summary
+      );
 
+    const issueKey =
+      svgEscape(
+        jira.issueKey
+      );
+
+    const priority =
+      svgEscape(
+        jira.priority
+      );
+
+    const assignee =
+      svgEscape(
+        jira.assignee
+      );
+
+    const titleSize =
+      titleFontSize(
+        jira.summary
+      );
+
+    const svg =
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',
+        '<rect width="320" height="120" rx="0" fill="' + cardColor + '"/>',
+        '<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">' + issueKey + '</text>',
+        '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',
+        '<text x="20" y="60" font-family="Arial, sans-serif" font-size="' + titleSize + '" font-weight="700" fill="#1A1A1A">' + summary + '</text>',
+        '<g transform="translate(18 92)" stroke="#1267E5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">',
+        '<path d="M0 0 L6 5 L12 0"/><path d="M0 4 L6 9 L12 4"/>',
+        '</g>',
+        '<text x="48" y="101" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + priority + '</text>',
+        '<text x="300" y="101" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + assignee + '</text>',
+        '</svg>'
+      ].join(
+        ""
+      );
+
+    const dataUrl =
+      "data:image/svg+xml;base64," +
+      btoa(
+        unescape(
+          encodeURIComponent(
+            svg
+          )
+        )
+      );
+
+    const image =
+      await miro.board.createImage({
+
+        title:
+          "CUSTOM_JIRA_CARD:" +
+          jira.issueKey,
+
+        url:
+          dataUrl,
+
+        linkedTo:
+          jira.browseUrl,
+
+        x,
+        y,
+        width
+
+      });
 
     try {
 
-      const background =
-        await miro.board.createShape({
+      const boardInfo =
+        await miro.board.getInfo();
 
-          shape:
-            "rectangle",
-
-          x,
-
-          y,
-
-          width,
-
-          height,
-
-          style: {
-
-            fillColor:
-              cardColor,
-
-            fillOpacity:
-              1,
-
-            borderOpacity:
-              0,
-
-            borderWidth:
-              0
-
+      const registrationResponse =
+        await backendPost(
+          "/register-custom-cards",
+          {
+            boardId:
+              boardInfo.id,
+            cards: [
+              {
+                issueKey:
+                  jira.issueKey,
+                groupId:
+                  String(
+                    image.id
+                  )
+              }
+            ]
           }
-
-        });
-
-
-      createdItems.push(
-        background
-      );
-
-
-      const issueKeyText =
-        await miro.board.createText({
-
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.issueKey
-            ) +
-            "</strong>",
-
-          x:
-            x - 122,
-
-          y:
-            y - 45,
-
-          width:
-            60,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        issueKeyText
-      );
-
-
-      const jiraLinkText =
-        await miro.board.createText({
-
-          content:
-            '<a href="' +
-            escapeHtml(
-              jira.browseUrl
-            ) +
-            '">Jira ↗</a>',
-
-          linkedTo:
-            jira.browseUrl,
-
-          x:
-            x + 112,
-
-          y:
-            y - 45,
-
-          width:
-            70,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        jiraLinkText
-      );
-
-
-      const summaryText =
-        await miro.board.createText({
-
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.summary
-            ) +
-            "</strong>",
-
-          x,
-
-          y:
-            y - 10,
-
-          width:
-            280,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              titleFontSize(
-                jira.summary
-              ),
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        summaryText
-      );
-
-
-      const priorityIcon =
-        await createPriorityIcon(
-
-          jira,
-
-          x - 138,
-
-          y + 42
-
         );
-
 
       if (
-        priorityIcon
+        !registrationResponse.ok
       ) {
-
-        createdItems.push(
-          priorityIcon
-        );
-
-      }
-
-
-      const priorityText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.priority
-            ),
-
-          x:
-            x - 72,
-
-          y:
-            y + 42,
-
-          width:
-            94,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        priorityText
-      );
-
-
-      const assigneeText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.assignee
-            ),
-
-          x:
-            x + 62,
-
-          y:
-            y + 42,
-
-          width:
-            160,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        assigneeText
-      );
-
-
-      group =
-        await miro.board.group({
-
-          items:
-            createdItems
-
-        });
-
-
-      try {
-
-        const boardInfo =
-          await miro.board.getInfo();
-
-
-        const registrationResponse =
-          await backendPost(
-
-            "/register-custom-cards",
-
-            {
-
-              boardId:
-                boardInfo.id,
-
-              cards: [
-
-                {
-                  issueKey:
-                    jira.issueKey,
-
-                  groupId:
-                    String(
-                      group.id
-                    )
-                }
-
-              ]
-
-            }
-
-          );
-
-
-        if (
-          !registrationResponse.ok
-        ) {
-
-          console.warn(
-            "CUSTOM CARD STICKY CONVERSION: grouped card mapping registration failed",
-            await registrationResponse.text()
-          );
-
-        }
-
-
-      } catch (
-        registrationError
-      ) {
-
         console.warn(
-          "CUSTOM CARD STICKY CONVERSION: grouped card mapping registration failed",
-          registrationError
+          "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",
+          await registrationResponse.text()
         );
-
       }
-
-
-      return {
-
-        frame:
-          group,
-
-        items:
-          createdItems
-
-      };
-
 
     } catch (
-      error
+      registrationError
     ) {
-
-      console.error(
-        "CUSTOM CARD STICKY CONVERSION: grouped card creation failed, cleaning up",
-        error
+      console.warn(
+        "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",
+        registrationError
       );
-
-
-      if (
-        group
-      ) {
-
-        try {
-          await group.ungroup();
-        } catch {}
-
-      }
-
-
-      for (
-        const item
-        of createdItems
-      ) {
-
-        try {
-
-          await miro.board.remove(
-            item
-          );
-
-        } catch {}
-
-      }
-
-
-      throw error;
-
     }
+
+    return {
+      frame:
+        image,
+      items: [
+        image
+      ]
+    };
 
   }
 
@@ -11528,7 +11331,8 @@ export default {
           read.ok !== false &&
           (
             read.item?.type === "app_card" ||
-            read.item?.type === "frame"
+            read.item?.type === "frame" ||
+            read.item?.type === "image"
           )
         ) {
 
