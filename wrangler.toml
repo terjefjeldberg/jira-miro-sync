@@ -1,7 +1,9 @@
 name = "jira-to-miro"
-main = "src/preview-entry.js"
+main = "src/preview-entry-v3.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
+
+# Preview rebuild marker: 2026-08-24-2
 
 [[kv_namespaces]]
 binding = "CARD_MAP"
