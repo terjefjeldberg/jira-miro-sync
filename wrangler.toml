@@ -1,5 +1,5 @@
 name = "jira-to-miro"
-main = "src/preview-entry-v2.js"
+main = "src/preview-entry-v3.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
 
