@@ -2052,6 +2052,78 @@ export default {
   }
 
 
+  async function customSyncGetAppCardSnapshot(appCardId) {
+
+    const appCard =
+      await miro.board.getById(
+        appCardId
+      );
+
+
+    if (
+      !appCard ||
+      appCard.type !== "app_card"
+    ) {
+      return null;
+    }
+
+
+    const issueKeyField =
+      (
+        appCard.fields ||
+        []
+      ).find(
+        field =>
+          customSyncIsIssueKey(
+            field?.value
+          )
+      );
+
+
+    if (
+      !issueKeyField
+    ) {
+      return null;
+    }
+
+
+    const issueKey =
+      customSyncPlainText(
+        issueKeyField.value
+      ).toUpperCase();
+
+
+    return {
+
+      container:
+        appCard,
+
+      containerType:
+        "app_card",
+
+      items: [
+        appCard
+      ],
+
+      issueKey,
+
+      cardX:
+        appCard.x,
+
+      cardY:
+        appCard.y,
+
+      cardWidth:
+        appCard.width,
+
+      cardHeight:
+        appCard.height
+
+    };
+
+  }
+
+
   async function customSyncGetFrameSnapshot(frameId) {
 
     const frame =
@@ -2230,6 +2302,17 @@ export default {
       !item
     ) {
       return null;
+    }
+
+
+    if (
+      item.type === "app_card"
+    ) {
+
+      return await customSyncGetAppCardSnapshot(
+        containerId
+      );
+
     }
 
 
@@ -3099,6 +3182,13 @@ export default {
       // Scan all frame-based custom cards and register them.
       // ------------------------------------------------------
 
+      const appCards =
+        await miro.board.get({
+          type:
+            "app_card"
+        });
+
+
       const frames =
         await miro.board.get({
           type:
@@ -3112,17 +3202,29 @@ export default {
         [];
 
 
+      const customContainers = [
+        ...frames,
+        ...appCards
+      ];
+
+
       for (
-        const frame
-        of frames
+        const container
+        of customContainers
       ) {
 
         const snapshot =
-          await customSyncGetFrameSnapshot(
-            String(
-              frame.id
-            )
-          );
+          container.type === "app_card"
+            ? await customSyncGetAppCardSnapshot(
+                String(
+                  container.id
+                )
+              )
+            : await customSyncGetFrameSnapshot(
+                String(
+                  container.id
+                )
+              );
 
 
         if (
@@ -3588,7 +3690,8 @@ export default {
       ) {
 
         if (
-          item.type === "frame"
+          item.type === "frame" ||
+          item.type === "app_card"
         ) {
 
           candidateContainerIds.add(
@@ -3776,12 +3879,12 @@ export default {
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT frame-based Miro -> Jira status sync ACTIVE"
+    "CUSTOM CARD EXPERIMENT single-item App Card Miro -> Jira status sync ACTIVE"
   );
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT Jira -> Miro Web SDK frame movement ACTIVE"
+    "CUSTOM CARD EXPERIMENT Jira -> Miro single-item movement ACTIVE"
   );
 
 
@@ -5520,9 +5623,6 @@ export default {
     const width =
       320;
 
-    const height =
-      120;
-
 
     const cardColor =
       customCardColorForWorkType(
@@ -5530,374 +5630,156 @@ export default {
       );
 
 
-    const createdItems =
-      [];
+    const fields = [
+
+      {
+        value:
+          jira.issueKey,
+
+        tooltip:
+          "Jira issue"
+      },
+
+      {
+        value:
+          jira.priority,
+
+        tooltip:
+          "Priority"
+      },
+
+      {
+        value:
+          jira.assignee,
+
+        tooltip:
+          "Assignee"
+      }
+
+    ];
 
 
-    let frame =
-      null;
+    if (
+      jira.priorityIconUrl
+    ) {
+
+      fields[1].iconUrl =
+        jira.priorityIconUrl;
+
+      fields[1].iconShape =
+        "square";
+
+    }
 
 
+    const appCard =
+      await miro.board.createAppCard({
+
+        title:
+          jira.summary,
+
+        linkedTo:
+          jira.browseUrl,
+
+        style: {
+
+          cardTheme:
+            cardColor,
+
+          fillBackground:
+            true
+
+        },
+
+        fields,
+
+        x,
+
+        y,
+
+        width,
+
+        status:
+          "connected"
+
+      });
+
+
+    // Register immediately so Jira -> Miro can move this exact
+    // single item without waiting for a later board scan.
     try {
 
-      frame =
-        await miro.board.createFrame({
-
-          title:
-            "",
-
-          style: {
-
-            fillColor:
-              cardColor
-
-          },
-
-          x,
-
-          y,
-
-          width,
-
-          height
-
-        });
+      const boardInfo =
+        await miro.board.getInfo();
 
 
-      const issueKeyText =
-        await miro.board.createText({
+      const registrationResponse =
+        await backendPost(
 
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.issueKey
-            ) +
-            "</strong>",
+          "/register-custom-cards",
 
-          x:
-            x - 122,
+          {
 
-          y:
-            y - 45,
+            boardId:
+              boardInfo.id,
 
-          width:
-            60,
+            cards: [
 
-          style: {
+              {
+                issueKey:
+                  jira.issueKey,
 
-            color:
-              "#1A1A1A",
+                // Existing backend field name retained for
+                // compatibility. The value is now one App Card ID.
+                groupId:
+                  String(
+                    appCard.id
+                  )
+              }
 
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
+            ]
 
           }
-
-        });
-
-
-      createdItems.push(
-        issueKeyText
-      );
-
-
-      const jiraLinkText =
-        await miro.board.createText({
-
-          content:
-            '<a href="' +
-            escapeHtml(
-              jira.browseUrl
-            ) +
-            '">Jira ↗</a>',
-
-          x:
-            x + 112,
-
-          y:
-            y - 45,
-
-          width:
-            70,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        jiraLinkText
-      );
-
-
-      const summaryText =
-        await miro.board.createText({
-
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.summary
-            ) +
-            "</strong>",
-
-          x,
-
-          y:
-            y - 10,
-
-          width:
-            280,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              titleFontSize(
-                jira.summary
-              ),
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        summaryText
-      );
-
-
-      const priorityIcon =
-        await createPriorityIcon(
-
-          jira,
-
-          x - 138,
-
-          y + 42
 
         );
 
 
       if (
-        priorityIcon
+        !registrationResponse.ok
       ) {
 
-        createdItems.push(
-          priorityIcon
+        console.warn(
+          "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",
+          await registrationResponse.text()
         );
 
       }
-
-
-      const priorityText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.priority
-            ),
-
-          x:
-            x - 72,
-
-          y:
-            y + 42,
-
-          width:
-            94,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        priorityText
-      );
-
-
-      const assigneeText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.assignee
-            ),
-
-          x:
-            x + 62,
-
-          y:
-            y + 42,
-
-          width:
-            160,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        assigneeText
-      );
-
-
-      for (
-        const item
-        of createdItems
-      ) {
-
-        await frame.add(
-          item
-        );
-
-      }
-
-
-      return {
-
-        frame,
-
-        items:
-          createdItems
-
-      };
 
 
     } catch (
-      error
+      registrationError
     ) {
 
-      console.error(
-        "CUSTOM CARD STICKY CONVERSION: frame creation failed, cleaning up",
-        error
+      console.warn(
+        "CUSTOM CARD STICKY CONVERSION: App Card mapping registration failed",
+        registrationError
       );
 
-
-      for (
-        const item
-        of createdItems
-      ) {
-
-        try {
-
-          await miro.board.remove(
-            item
-          );
-
-        } catch (
-          cleanupError
-        ) {
-
-          console.warn(
-            "Could not clean up partially-created custom-card item",
-            cleanupError
-          );
-
-        }
-
-      }
-
-
-      if (
-        frame
-      ) {
-
-        try {
-
-          await miro.board.remove(
-            frame
-          );
-
-        } catch (
-          cleanupError
-        ) {
-
-          console.warn(
-            "Could not clean up partially-created custom-card frame",
-            cleanupError
-          );
-
-        }
-
-      }
-
-
-      throw error;
-
     }
+
+
+    // Keep the old return shape for the surrounding conversion
+    // code. `frame` now points to the single App Card item.
+    return {
+
+      frame:
+        appCard,
+
+      items: [
+        appCard
+      ]
+
+    };
 
   }
 
@@ -11345,7 +11227,10 @@ export default {
         if (
           read.found &&
           read.ok !== false &&
-          read.item?.type === "frame"
+          (
+            read.item?.type === "app_card" ||
+            read.item?.type === "frame"
+          )
         ) {
 
           return await moveCustomFrame(
