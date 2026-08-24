@@ -10016,11 +10016,73 @@ export default {
         );
 
 
-      const status =
+      let status =
         String(
           body.status ??
           ""
         ).trim();
+
+
+      // Jira Automation can occasionally expose the pre-transition
+      // status in the webhook smart value. Always resolve the current
+      // Jira status server-side so Jira -> Miro uses the actual state.
+      try {
+
+        const liveStatusResponse =
+          await fetch(
+
+            jiraApiBase +
+            "/issue/" +
+            encodeURIComponent(
+              issueKey
+            ) +
+            "?fields=status",
+
+            {
+              method:
+                "GET",
+
+              headers:
+                jiraHeaders
+            }
+
+          );
+
+
+        if (
+          liveStatusResponse.ok
+        ) {
+
+          const liveStatusData =
+            await liveStatusResponse.json();
+
+          const liveStatus =
+            String(
+              liveStatusData.fields
+                ?.status
+                ?.name ??
+              ""
+            ).trim();
+
+          if (
+            liveStatus
+          ) {
+            status =
+              liveStatus;
+          }
+
+        }
+
+      } catch (
+        liveStatusError
+      ) {
+
+        console.warn(
+          "JIRA -> MIRO: could not refresh live Jira status; using webhook status",
+          liveStatusError
+        );
+
+      }
 
 
       if (
@@ -10810,7 +10872,13 @@ export default {
         }
 
 
+        // Image-based custom cards can be children of a Miro frame.
+        // In that case REST x/y coordinates are parent-relative rather
+        // than canvas-relative, so the generic active-board parking
+        // check incorrectly marks a visible card as parked. Exact KV
+        // mapping makes it safe to move this single image item directly.
         if (
+          frameItem.type !== "image" &&
           !insideActiveBoard(
             currentX,
             currentY
@@ -10874,16 +10942,64 @@ export default {
         }
 
 
-        const patchResponse =
-          await patchMiroItemPosition(
+        let patchResponse;
 
-            frameId,
 
-            targetColumn.targetX,
+        if (
+          frameItem.type === "image"
+        ) {
 
-            currentY
+          patchResponse =
+            await fetch(
 
-          );
+              boardItemsBase +
+              encodeURIComponent(
+                frameId
+              ),
+
+              {
+                method:
+                  "PATCH",
+
+                headers: {
+                  ...miroHeaders,
+                  "Content-Type":
+                    "application/json"
+                },
+
+                body:
+                  JSON.stringify({
+                    parent: {
+                      id:
+                        null
+                    },
+                    position: {
+                      x:
+                        targetColumn.targetX,
+                      y:
+                        currentY,
+                      origin:
+                        "center"
+                    }
+                  })
+              }
+
+            );
+
+        } else {
+
+          patchResponse =
+            await patchMiroItemPosition(
+
+              frameId,
+
+              targetColumn.targetX,
+
+              currentY
+
+            );
+
+        }
 
 
         if (
