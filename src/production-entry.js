@@ -1,4 +1,4 @@
-import reporterWorker from "./reporter-create-entry.js";
+import reporterWorker from "./reporter-fallback-entry.js";
 import previewWorker from "./preview-entry-v2.js";
 
 export default {
