@@ -2052,6 +2052,143 @@ export default {
   }
 
 
+  async function customSyncGetAppCardSnapshot(appCardId) {
+
+    const appCard =
+      await miro.board.getById(
+        appCardId
+      );
+
+
+    if (
+      !appCard ||
+      appCard.type !== "app_card"
+    ) {
+      return null;
+    }
+
+
+    const issueKeyField =
+      (
+        appCard.fields ||
+        []
+      ).find(
+        field =>
+          customSyncIsIssueKey(
+            field?.value
+          )
+      );
+
+
+    if (
+      !issueKeyField
+    ) {
+      return null;
+    }
+
+
+    const issueKey =
+      customSyncPlainText(
+        issueKeyField.value
+      ).toUpperCase();
+
+
+    return {
+
+      container:
+        appCard,
+
+      containerType:
+        "app_card",
+
+      items: [
+        appCard
+      ],
+
+      issueKey,
+
+      cardX:
+        appCard.x,
+
+      cardY:
+        appCard.y,
+
+      cardWidth:
+        appCard.width,
+
+      cardHeight:
+        appCard.height
+
+    };
+
+  }
+
+
+  async function customSyncGetImageSnapshot(imageId) {
+
+    const image =
+      await miro.board.getById(
+        imageId
+      );
+
+    if (
+      !image ||
+      image.type !== "image"
+    ) {
+      return null;
+    }
+
+    const title =
+      String(
+        image.title ||
+        ""
+      ).trim();
+
+    const match =
+      title.match(
+        /^CUSTOM_JIRA_CARD:(SN-\\d+)$/i
+      );
+
+    if (
+      !match
+    ) {
+      return null;
+    }
+
+    const issueKey =
+      match[1].toUpperCase();
+
+    return {
+
+      container:
+        image,
+
+      containerType:
+        "image",
+
+      items: [
+        image
+      ],
+
+      issueKey,
+
+      cardX:
+        image.x,
+
+      cardY:
+        image.y,
+
+      cardWidth:
+        image.width,
+
+      cardHeight:
+        image.height
+
+    };
+
+  }
+
+
   async function customSyncGetFrameSnapshot(frameId) {
 
     const frame =
@@ -2230,6 +2367,28 @@ export default {
       !item
     ) {
       return null;
+    }
+
+
+    if (
+      item.type === "app_card"
+    ) {
+
+      return await customSyncGetAppCardSnapshot(
+        containerId
+      );
+
+    }
+
+
+    if (
+      item.type === "image"
+    ) {
+
+      return await customSyncGetImageSnapshot(
+        containerId
+      );
+
     }
 
 
@@ -3099,6 +3258,20 @@ export default {
       // Scan all frame-based custom cards and register them.
       // ------------------------------------------------------
 
+      const appCards =
+        await miro.board.get({
+          type:
+            "app_card"
+        });
+
+
+      const images =
+        await miro.board.get({
+          type:
+            "image"
+        });
+
+
       const frames =
         await miro.board.get({
           type:
@@ -3112,17 +3285,50 @@ export default {
         [];
 
 
+      const groups =
+        await miro.board.get({
+          type:
+            "group"
+        });
+
+
+      const customContainers = [
+        ...frames,
+        ...appCards,
+        ...groups,
+        ...images
+      ];
+
+
       for (
-        const frame
-        of frames
+        const container
+        of customContainers
       ) {
 
         const snapshot =
-          await customSyncGetFrameSnapshot(
-            String(
-              frame.id
-            )
-          );
+          container.type === "app_card"
+            ? await customSyncGetAppCardSnapshot(
+                String(
+                  container.id
+                )
+              )
+            : container.type === "image"
+              ? await customSyncGetImageSnapshot(
+                  String(
+                    container.id
+                  )
+                )
+              : container.type === "group"
+                ? await customSyncGetLegacyGroupSnapshot(
+                    String(
+                      container.id
+                    )
+                  )
+                : await customSyncGetFrameSnapshot(
+                    String(
+                      container.id
+                    )
+                  );
 
 
         if (
@@ -3588,7 +3794,9 @@ export default {
       ) {
 
         if (
-          item.type === "frame"
+          item.type === "frame" ||
+          item.type === "app_card" ||
+          item.type === "image"
         ) {
 
           candidateContainerIds.add(
@@ -3776,12 +3984,12 @@ export default {
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT frame-based Miro -> Jira status sync ACTIVE"
+    "CUSTOM CARD EXPERIMENT single-image Miro -> Jira status sync ACTIVE"
   );
 
 
   console.log(
-    "CUSTOM CARD EXPERIMENT Jira -> Miro Web SDK frame movement ACTIVE"
+    "CUSTOM CARD EXPERIMENT Jira -> Miro grouped-card movement ACTIVE"
   );
 
 
@@ -5523,381 +5731,145 @@ export default {
     const height =
       120;
 
-
     const cardColor =
       customCardColorForWorkType(
         jira.workType
       );
 
+    function svgEscape(value) {
 
-    const createdItems =
-      [];
+      return String(
+        value ??
+        ""
+      )
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
 
+    }
 
-    let frame =
-      null;
+    const summary =
+      svgEscape(
+        jira.summary
+      );
 
+    const issueKey =
+      svgEscape(
+        jira.issueKey
+      );
+
+    const priority =
+      svgEscape(
+        jira.priority
+      );
+
+    const assignee =
+      svgEscape(
+        jira.assignee
+      );
+
+    const titleSize =
+      titleFontSize(
+        jira.summary
+      );
+
+    const svg =
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',
+        '<rect width="320" height="120" rx="0" fill="' + cardColor + '"/>',
+        '<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">' + issueKey + '</text>',
+        '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',
+        '<text x="20" y="60" font-family="Arial, sans-serif" font-size="' + titleSize + '" font-weight="700" fill="#1A1A1A">' + summary + '</text>',
+        '<g transform="translate(18 92)" stroke="#1267E5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">',
+        '<path d="M0 0 L6 5 L12 0"/><path d="M0 4 L6 9 L12 4"/>',
+        '</g>',
+        '<text x="48" y="101" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + priority + '</text>',
+        '<text x="300" y="101" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">' + assignee + '</text>',
+        '</svg>'
+      ].join(
+        ""
+      );
+
+    const dataUrl =
+      "data:image/svg+xml;base64," +
+      btoa(
+        unescape(
+          encodeURIComponent(
+            svg
+          )
+        )
+      );
+
+    const image =
+      await miro.board.createImage({
+
+        title:
+          "CUSTOM_JIRA_CARD:" +
+          jira.issueKey,
+
+        url:
+          dataUrl,
+
+        linkedTo:
+          jira.browseUrl,
+
+        x,
+        y,
+        width
+
+      });
 
     try {
 
-      frame =
-        await miro.board.createFrame({
+      const boardInfo =
+        await miro.board.getInfo();
 
-          title:
-            "",
-
-          style: {
-
-            fillColor:
-              cardColor
-
-          },
-
-          x,
-
-          y,
-
-          width,
-
-          height
-
-        });
-
-
-      const issueKeyText =
-        await miro.board.createText({
-
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.issueKey
-            ) +
-            "</strong>",
-
-          x:
-            x - 122,
-
-          y:
-            y - 45,
-
-          width:
-            60,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
-
+      const registrationResponse =
+        await backendPost(
+          "/register-custom-cards",
+          {
+            boardId:
+              boardInfo.id,
+            cards: [
+              {
+                issueKey:
+                  jira.issueKey,
+                groupId:
+                  String(
+                    image.id
+                  )
+              }
+            ]
           }
-
-        });
-
-
-      createdItems.push(
-        issueKeyText
-      );
-
-
-      const jiraLinkText =
-        await miro.board.createText({
-
-          content:
-            '<a href="' +
-            escapeHtml(
-              jira.browseUrl
-            ) +
-            '">Jira ↗</a>',
-
-          x:
-            x + 112,
-
-          y:
-            y - 45,
-
-          width:
-            70,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        jiraLinkText
-      );
-
-
-      const summaryText =
-        await miro.board.createText({
-
-          content:
-            "<strong>" +
-            escapeHtml(
-              jira.summary
-            ) +
-            "</strong>",
-
-          x,
-
-          y:
-            y - 10,
-
-          width:
-            280,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              titleFontSize(
-                jira.summary
-              ),
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        summaryText
-      );
-
-
-      const priorityIcon =
-        await createPriorityIcon(
-
-          jira,
-
-          x - 138,
-
-          y + 42
-
         );
-
 
       if (
-        priorityIcon
+        !registrationResponse.ok
       ) {
-
-        createdItems.push(
-          priorityIcon
+        console.warn(
+          "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",
+          await registrationResponse.text()
         );
-
       }
-
-
-      const priorityText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.priority
-            ),
-
-          x:
-            x - 72,
-
-          y:
-            y + 42,
-
-          width:
-            94,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "left"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        priorityText
-      );
-
-
-      const assigneeText =
-        await miro.board.createText({
-
-          content:
-            escapeHtml(
-              jira.assignee
-            ),
-
-          x:
-            x + 62,
-
-          y:
-            y + 42,
-
-          width:
-            160,
-
-          style: {
-
-            color:
-              "#1A1A1A",
-
-            fillColor:
-              "transparent",
-
-            fontFamily:
-              "arial",
-
-            fontSize:
-              10,
-
-            textAlign:
-              "right"
-
-          }
-
-        });
-
-
-      createdItems.push(
-        assigneeText
-      );
-
-
-      for (
-        const item
-        of createdItems
-      ) {
-
-        await frame.add(
-          item
-        );
-
-      }
-
-
-      return {
-
-        frame,
-
-        items:
-          createdItems
-
-      };
-
 
     } catch (
-      error
+      registrationError
     ) {
-
-      console.error(
-        "CUSTOM CARD STICKY CONVERSION: frame creation failed, cleaning up",
-        error
+      console.warn(
+        "CUSTOM CARD STICKY CONVERSION: image mapping registration failed",
+        registrationError
       );
-
-
-      for (
-        const item
-        of createdItems
-      ) {
-
-        try {
-
-          await miro.board.remove(
-            item
-          );
-
-        } catch (
-          cleanupError
-        ) {
-
-          console.warn(
-            "Could not clean up partially-created custom-card item",
-            cleanupError
-          );
-
-        }
-
-      }
-
-
-      if (
-        frame
-      ) {
-
-        try {
-
-          await miro.board.remove(
-            frame
-          );
-
-        } catch (
-          cleanupError
-        ) {
-
-          console.warn(
-            "Could not clean up partially-created custom-card frame",
-            cleanupError
-          );
-
-        }
-
-      }
-
-
-      throw error;
-
     }
+
+    return {
+      frame:
+        image,
+      items: [
+        image
+      ]
+    };
 
   }
 
@@ -10044,11 +10016,73 @@ export default {
         );
 
 
-      const status =
+      let status =
         String(
           body.status ??
           ""
         ).trim();
+
+
+      // Jira Automation can occasionally expose the pre-transition
+      // status in the webhook smart value. Always resolve the current
+      // Jira status server-side so Jira -> Miro uses the actual state.
+      try {
+
+        const liveStatusResponse =
+          await fetch(
+
+            jiraApiBase +
+            "/issue/" +
+            encodeURIComponent(
+              issueKey
+            ) +
+            "?fields=status",
+
+            {
+              method:
+                "GET",
+
+              headers:
+                jiraHeaders
+            }
+
+          );
+
+
+        if (
+          liveStatusResponse.ok
+        ) {
+
+          const liveStatusData =
+            await liveStatusResponse.json();
+
+          const liveStatus =
+            String(
+              liveStatusData.fields
+                ?.status
+                ?.name ??
+              ""
+            ).trim();
+
+          if (
+            liveStatus
+          ) {
+            status =
+              liveStatus;
+          }
+
+        }
+
+      } catch (
+        liveStatusError
+      ) {
+
+        console.warn(
+          "JIRA -> MIRO: could not refresh live Jira status; using webhook status",
+          liveStatusError
+        );
+
+      }
 
 
       if (
@@ -10366,6 +10400,139 @@ export default {
             await response.json()
 
         };
+
+      }
+
+
+      async function resolveCanvasPosition(
+        item,
+        seenIds = new Set()
+      ) {
+
+        const itemId =
+          String(
+            item?.id ??
+            ""
+          );
+
+        if (
+          itemId &&
+          seenIds.has(
+            itemId
+          )
+        ) {
+          return null;
+        }
+
+        if (
+          itemId
+        ) {
+          seenIds.add(
+            itemId
+          );
+        }
+
+        const x =
+          item?.position?.x;
+
+        const y =
+          item?.position?.y;
+
+        if (
+          typeof x !== "number" ||
+          typeof y !== "number"
+        ) {
+          return null;
+        }
+
+        const relativeTo =
+          String(
+            item?.position?.relativeTo ??
+            "canvas_center"
+          );
+
+        const parentId =
+          String(
+            item?.parent?.id ??
+            ""
+          ).trim();
+
+        if (
+          !parentId ||
+          relativeTo === "canvas_center"
+        ) {
+          return {
+            x,
+            y
+          };
+        }
+
+        const parentRead =
+          await readMiroItem(
+            parentId
+          );
+
+        if (
+          !parentRead.found ||
+          parentRead.ok === false
+        ) {
+          return null;
+        }
+
+        const parentCanvas =
+          await resolveCanvasPosition(
+            parentRead.item,
+            seenIds
+          );
+
+        if (
+          !parentCanvas
+        ) {
+          return null;
+        }
+
+        if (
+          relativeTo === "parent_center"
+        ) {
+          return {
+            x:
+              parentCanvas.x + x,
+            y:
+              parentCanvas.y + y
+          };
+        }
+
+        if (
+          relativeTo === "parent_top_left"
+        ) {
+
+          const parentWidth =
+            parentRead.item?.geometry?.width;
+
+          const parentHeight =
+            parentRead.item?.geometry?.height;
+
+          if (
+            typeof parentWidth !== "number" ||
+            typeof parentHeight !== "number"
+          ) {
+            return null;
+          }
+
+          return {
+            x:
+              parentCanvas.x -
+              parentWidth / 2 +
+              x,
+            y:
+              parentCanvas.y -
+              parentHeight / 2 +
+              y
+          };
+
+        }
+
+        return null;
 
       }
 
@@ -10805,11 +10972,23 @@ export default {
         frameItem
       ) {
 
+        const canvasPosition =
+          frameItem.type === "image"
+            ? await resolveCanvasPosition(
+                frameItem
+              )
+            : {
+                x:
+                  frameItem.position?.x,
+                y:
+                  frameItem.position?.y
+              };
+
         const currentX =
-          frameItem.position?.x;
+          canvasPosition?.x;
 
         const currentY =
-          frameItem.position?.y;
+          canvasPosition?.y;
 
         const cardWidth =
           frameItem.geometry?.width;
@@ -10838,6 +11017,9 @@ export default {
         }
 
 
+        // Keep the active-board safety rule for every custom card.
+        // Image cards may be children of a frame, so currentX/currentY
+        // above are first resolved to absolute canvas coordinates.
         if (
           !insideActiveBoard(
             currentX,
@@ -10857,7 +11039,30 @@ export default {
               false,
 
             parked:
-              true
+              true,
+
+            debugPosition: {
+              resolvedX:
+                currentX,
+              resolvedY:
+                currentY,
+              rawX:
+                frameItem.position?.x ?? null,
+              rawY:
+                frameItem.position?.y ?? null,
+              relativeTo:
+                frameItem.position?.relativeTo ?? null,
+              parentId:
+                frameItem.parent?.id ?? null,
+              boardLeft:
+                ACTIVE_BOARD.left,
+              boardRight:
+                ACTIVE_BOARD.right,
+              boardTop:
+                ACTIVE_BOARD.top,
+              boardBottom:
+                ACTIVE_BOARD.bottom
+            }
 
           };
 
@@ -10902,16 +11107,64 @@ export default {
         }
 
 
-        const patchResponse =
-          await patchMiroItemPosition(
+        let patchResponse;
 
-            frameId,
 
-            targetColumn.targetX,
+        if (
+          frameItem.type === "image"
+        ) {
 
-            currentY
+          patchResponse =
+            await fetch(
 
-          );
+              boardItemsBase +
+              encodeURIComponent(
+                frameId
+              ),
+
+              {
+                method:
+                  "PATCH",
+
+                headers: {
+                  ...miroHeaders,
+                  "Content-Type":
+                    "application/json"
+                },
+
+                body:
+                  JSON.stringify({
+                    parent: {
+                      id:
+                        null
+                    },
+                    position: {
+                      x:
+                        targetColumn.targetX,
+                      y:
+                        currentY,
+                      origin:
+                        "center"
+                    }
+                  })
+              }
+
+            );
+
+        } else {
+
+          patchResponse =
+            await patchMiroItemPosition(
+
+              frameId,
+
+              targetColumn.targetX,
+
+              currentY
+
+            );
+
+        }
 
 
         if (
@@ -11224,77 +11477,89 @@ export default {
           currentX;
 
 
-        for (
-          const item
-          of childItems
+        const moveResults =
+          await Promise.all(
+
+            childItems.map(
+              async item => {
+
+                const itemX =
+                  item.position?.x;
+
+                const itemY =
+                  item.position?.y;
+
+
+                if (
+                  typeof itemX !== "number" ||
+                  typeof itemY !== "number"
+                ) {
+
+                  return {
+                    ok: false,
+                    itemId: String(item.id),
+                    reason: "invalid-geometry"
+                  };
+
+                }
+
+
+                const response =
+                  await patchMiroItemPosition(
+
+                    String(
+                      item.id
+                    ),
+
+                    itemX + deltaX,
+
+                    itemY
+
+                  );
+
+
+                return {
+                  ok: response.ok,
+                  itemId: String(item.id),
+                  status: response.status,
+                  error: response.ok ? null : await response.text()
+                };
+
+              }
+            )
+
+          );
+
+
+        const failedMove =
+          moveResults.find(
+            result =>
+              !result.ok
+          );
+
+
+        if (
+          failedMove
         ) {
 
-          const x =
-            item.position?.x;
+          return {
 
-          const y =
-            item.position?.y;
+            ok:
+              false,
 
+            stage:
+              "custom-group-parallel-move",
 
-          if (
-            typeof x !== "number" ||
-            typeof y !== "number"
-          ) {
+            itemId:
+              failedMove.itemId,
 
-            return {
+            miroStatus:
+              failedMove.status ?? null,
 
-              ok:
-                false,
+            error:
+              failedMove.error ?? failedMove.reason
 
-              stage:
-                "custom-legacy-child-geometry",
-
-              itemId:
-                item.id
-
-            };
-
-          }
-
-
-          const patchResponse =
-            await patchMiroItemPosition(
-
-              String(
-                item.id
-              ),
-
-              x + deltaX,
-
-              y
-
-            );
-
-
-          if (
-            !patchResponse.ok
-          ) {
-
-            return {
-
-              ok:
-                false,
-
-              stage:
-                "custom-legacy-move",
-
-              itemId:
-                item.id,
-
-              miroStatus:
-                patchResponse.status,
-
-              error:
-                await patchResponse.text()
-
-            };
-
-          }
+          };
 
         }
 
@@ -11345,7 +11610,11 @@ export default {
         if (
           read.found &&
           read.ok !== false &&
-          read.item?.type === "frame"
+          (
+            read.item?.type === "app_card" ||
+            read.item?.type === "frame" ||
+            read.item?.type === "image"
+          )
         ) {
 
           return await moveCustomFrame(
