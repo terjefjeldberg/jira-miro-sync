@@ -79,17 +79,38 @@ function cardColorForWorkType(workType) {
   return WORK_TYPE_COLORS[String(workType ?? "").trim().toLowerCase()] || "#E8E8E8";
 }
 
-function utf8ToBase64(value) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+function priorityIconSvg(priority) {
+  const value = String(priority ?? "").trim().toLowerCase();
+  const red = "#E34935";
+  const orange = "#E97F33";
+  const blue = "#1267E5";
+  const gray = "#6B778C";
+
+  if (value === "highest") {
+    return `<g transform="translate(18 88)" fill="none" stroke="${red}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L6 1 L12 7"/><path d="M0 12 L6 6 L12 12"/></g>`;
   }
-  return btoa(binary);
+
+  if (value === "high") {
+    return `<g transform="translate(18 90)" fill="none" stroke="${red}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 8 L6 2 L12 8"/></g>`;
+  }
+
+  if (value === "medium") {
+    return `<g transform="translate(18 95)" fill="none" stroke="${orange}" stroke-width="2.4" stroke-linecap="round"><path d="M0 0 H12"/></g>`;
+  }
+
+  if (value === "low") {
+    return `<g transform="translate(18 91)" fill="none" stroke="${blue}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L6 8 L12 2"/></g>`;
+  }
+
+  if (value === "lowest") {
+    return `<g transform="translate(18 88)" fill="none" stroke="${blue}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 1 L6 7 L12 1"/><path d="M0 6 L6 12 L12 6"/></g>`;
+  }
+
+  return `<g transform="translate(18 95)" fill="none" stroke="${gray}" stroke-width="2.4" stroke-linecap="round"><path d="M0 0 H12"/></g>`;
 }
 
-function bytesToBase64(bytes) {
+function utf8ToBase64(value) {
+  const bytes = new TextEncoder().encode(value);
   let binary = "";
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
@@ -154,32 +175,9 @@ async function readJiraCardData(env, issueKey) {
     issueKey,
     summary: String(issue?.fields?.summary ?? ""),
     priority: String(issue?.fields?.priority?.name ?? "None"),
-    priorityIconUrl: String(issue?.fields?.priority?.iconUrl ?? ""),
     assignee: String(issue?.fields?.assignee?.displayName ?? "Unassigned"),
     workType: String(issue?.fields?.issuetype?.name ?? "Unknown"),
   };
-}
-
-async function priorityIconAsDataUrl(iconUrl) {
-  if (!iconUrl) return "";
-
-  try {
-    const response = await fetch(iconUrl, {
-      headers: { Accept: "image/*" },
-    });
-
-    if (!response.ok) return "";
-
-    const contentType = String(response.headers.get("Content-Type") || "image/png")
-      .split(";")[0]
-      .trim();
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length === 0 || bytes.length > 256 * 1024) return "";
-
-    return `data:${contentType};base64,${bytesToBase64(bytes)}`;
-  } catch {
-    return "";
-  }
 }
 
 async function buildCardSvgDataUrl(jira) {
@@ -189,11 +187,7 @@ async function buildCardSvgDataUrl(jira) {
   const priority = svgEscape(jira.priority);
   const assignee = svgEscape(jira.assignee);
   const titleSize = titleFontSize(jira.summary);
-  const priorityIconDataUrl = await priorityIconAsDataUrl(jira.priorityIconUrl);
-
-  const priorityIconSvg = priorityIconDataUrl
-    ? `<image x="18" y="88" width="14" height="14" href="${priorityIconDataUrl}"/>`
-    : '<g transform="translate(18 92)" stroke="#1267E5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M0 0 L6 5 L12 0"/><path d="M0 4 L6 9 L12 4"/></g>';
+  const priorityIcon = priorityIconSvg(jira.priority);
 
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">',
@@ -201,7 +195,7 @@ async function buildCardSvgDataUrl(jira) {
     `<text x="12" y="18" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">${issueKey}</text>`,
     '<text x="308" y="18" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>',
     `<text x="20" y="60" font-family="Arial, sans-serif" font-size="${titleSize}" font-weight="700" fill="#1A1A1A">${summary}</text>`,
-    priorityIconSvg,
+    priorityIcon,
     `<text x="40" y="101" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">${priority}</text>`,
     `<text x="300" y="101" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#1A1A1A">${assignee}</text>`,
     '</svg>',
@@ -302,7 +296,7 @@ async function refreshCustomCardImage(env, issueKey) {
     fields: {
       summary: jira.summary,
       priority: jira.priority,
-      priorityIcon: Boolean(jira.priorityIconUrl),
+      priorityIcon: true,
       assignee: jira.assignee,
     },
   };
