@@ -11039,7 +11039,30 @@ export default {
               false,
 
             parked:
-              true
+              true,
+
+            debugPosition: {
+              resolvedX:
+                currentX,
+              resolvedY:
+                currentY,
+              rawX:
+                frameItem.position?.x ?? null,
+              rawY:
+                frameItem.position?.y ?? null,
+              relativeTo:
+                frameItem.position?.relativeTo ?? null,
+              parentId:
+                frameItem.parent?.id ?? null,
+              boardLeft:
+                ACTIVE_BOARD.left,
+              boardRight:
+                ACTIVE_BOARD.right,
+              boardTop:
+                ACTIVE_BOARD.top,
+              boardBottom:
+                ACTIVE_BOARD.bottom
+            }
 
           };
 
