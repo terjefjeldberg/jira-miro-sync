@@ -131,6 +131,12 @@ function patchCustomCardLayout(html) {
     patched = patched.replace(oldTitleLine, "        titleSvg,");
   }
 
+  const oldBackgroundLine = `        '<rect width="320" height="120" rx="0" fill="' + cardColor + '"/>',`;
+  const borderedBackgroundLine = `        '<rect x="2" y="2" width="316" height="116" rx="6" fill="' + cardColor + '" stroke="#3F4854" stroke-width="2"/>',`;
+  if (patched.includes(oldBackgroundLine)) {
+    patched = patched.replace(oldBackgroundLine, borderedBackgroundLine);
+  }
+
   patched = patched.replaceAll(
     'font-family="Arial, sans-serif"',
     'font-family="Open Sans, Arial, sans-serif"',
