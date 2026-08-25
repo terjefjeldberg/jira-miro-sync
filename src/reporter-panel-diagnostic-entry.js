@@ -34,7 +34,8 @@ async function injectCreatorDiagnostic(baseResponse) {
   const KNOWN_MIRO_CREATORS = {
     "3458764589815876301": "Kristoffer Rask",
     "3074457347700027993": "Tim Chipman",
-    "3074457362562828515": "Rupert Hanna"
+    "3074457362562828515": "Rupert Hanna",
+    "3458764555898556023": "Masud Mahamed"
   };
 
   const creatorIdButton = document.getElementById("creatorIdButton");
@@ -61,7 +62,7 @@ async function injectCreatorDiagnostic(baseResponse) {
       }
 
       const creatorName = KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
-      alert("Creator: " + creatorName + "\nMiro creator ID: " + creatorId);
+      alert("Creator: " + creatorName + "\\nMiro creator ID: " + creatorId);
     } catch (error) {
       console.error("MIRO CREATOR ID DIAGNOSTIC FAILED:", error);
       alert("Could not read the sticky creator. Check the browser console for details.");
