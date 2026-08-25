@@ -10,6 +10,135 @@ function responseWithText(original, text) {
   });
 }
 
+function patchCustomCardLayout(html) {
+  let patched = html;
+
+  const titleSizeBlock = /\n\s*const titleSize =\s*titleFontSize\(\s*jira\.summary\s*\);/;
+  const dynamicTitleBlock = `
+
+    function estimateTitleTextWidth(text, fontSize) {
+      const value = String(text || "");
+      let units = 0;
+
+      for (const char of value) {
+        if (char === " ") units += 0.28;
+        else if (/[ilI1.,'!:;|]/.test(char)) units += 0.28;
+        else if (/[mwMW@#%&]/.test(char)) units += 0.9;
+        else if (/[A-Z0-9]/.test(char)) units += 0.62;
+        else units += 0.54;
+      }
+
+      return units * fontSize;
+    }
+
+    function splitTitleWord(word, fontSize, maxWidth) {
+      const chunks = [];
+      let current = "";
+
+      for (const char of String(word || "")) {
+        const candidate = current + char;
+        if (current && estimateTitleTextWidth(candidate, fontSize) > maxWidth) {
+          chunks.push(current);
+          current = char;
+        } else {
+          current = candidate;
+        }
+      }
+
+      if (current) chunks.push(current);
+      return chunks.length ? chunks : [String(word || "")];
+    }
+
+    function wrapTitleLines(text, fontSize, maxWidth) {
+      const words = String(text || "").trim().split(/\\s+/).filter(Boolean);
+      const lines = [];
+      let currentLine = "";
+
+      for (const word of words) {
+        const parts = estimateTitleTextWidth(word, fontSize) > maxWidth
+          ? splitTitleWord(word, fontSize, maxWidth)
+          : [word];
+
+        for (const part of parts) {
+          const candidate = currentLine ? currentLine + " " + part : part;
+          if (estimateTitleTextWidth(candidate, fontSize) <= maxWidth) {
+            currentLine = candidate;
+          } else {
+            if (currentLine) lines.push(currentLine);
+            currentLine = part;
+          }
+        }
+      }
+
+      if (currentLine) lines.push(currentLine);
+      return lines.length ? lines : [""];
+    }
+
+    function buildTitleLayout(text) {
+      const titleBox = { x: 20, y: 26, width: 280, height: 56 };
+      const minFontSize = 10;
+      const maxFontSize = 44;
+      const maxLines = 4;
+      const lineHeightFactor = 1.05;
+
+      for (let fontSize = maxFontSize; fontSize >= minFontSize; fontSize -= 1) {
+        const lines = wrapTitleLines(text, fontSize, titleBox.width);
+        const lineHeight = fontSize * lineHeightFactor;
+        const totalHeight = lines.length * lineHeight;
+
+        if (lines.length <= maxLines && totalHeight <= titleBox.height) {
+          return {
+            centerX: titleBox.x + titleBox.width / 2,
+            startY: titleBox.y + (titleBox.height - totalHeight) / 2 + fontSize * 0.82,
+            fontSize,
+            lineHeight,
+            lines
+          };
+        }
+      }
+
+      const fontSize = minFontSize;
+      const lines = wrapTitleLines(text, fontSize, titleBox.width).slice(0, maxLines);
+      const lineHeight = fontSize * lineHeightFactor;
+      const totalHeight = lines.length * lineHeight;
+
+      return {
+        centerX: titleBox.x + titleBox.width / 2,
+        startY: titleBox.y + (titleBox.height - totalHeight) / 2 + fontSize * 0.82,
+        fontSize,
+        lineHeight,
+        lines
+      };
+    }
+
+    const titleLayout = buildTitleLayout(jira.summary);
+    const titleSvg = [
+      '<text x="' + titleLayout.centerX + '" y="' + titleLayout.startY + '" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="' + titleLayout.fontSize + '" font-weight="400" fill="#1A1A1A">',
+      ...titleLayout.lines.map(function (line, index) {
+        return index === 0
+          ? '<tspan x="' + titleLayout.centerX + '">' + svgEscape(line) + '</tspan>'
+          : '<tspan x="' + titleLayout.centerX + '" dy="' + titleLayout.lineHeight + '">' + svgEscape(line) + '</tspan>';
+      }),
+      '</text>'
+    ].join("");`;
+
+  if (titleSizeBlock.test(patched)) {
+    patched = patched.replace(titleSizeBlock, dynamicTitleBlock);
+  }
+
+  const oldTitleLine = `        '<text x="20" y="60" font-family="Arial, sans-serif" font-size="' + titleSize + '" font-weight="700" fill="#1A1A1A">' + summary + '</text>',`;
+  if (patched.includes(oldTitleLine)) {
+    patched = patched.replace(oldTitleLine, "        titleSvg,");
+  }
+
+  patched = patched.replaceAll(
+    'font-family="Arial, sans-serif"',
+    'font-family="Open Sans, Arial, sans-serif"',
+  );
+
+  return patched;
+}
+
 async function injectCreatorDiagnostic(baseResponse) {
   if (!baseResponse.ok) return baseResponse;
 
@@ -28,7 +157,7 @@ async function injectCreatorDiagnostic(baseResponse) {
   `;
 
   const buttonTarget = '<button id="convertButton">';
-  let patched = html;
+  let patched = patchCustomCardLayout(html);
 
   if (patched.includes(buttonTarget) && !patched.includes('id="creatorIdButton"')) {
     patched = patched.replace(buttonTarget, buttonMarkup + "\n" + buttonTarget);
