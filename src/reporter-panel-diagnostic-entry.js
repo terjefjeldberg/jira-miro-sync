@@ -17,7 +17,7 @@ async function injectCreatorDiagnostic(baseResponse) {
 
   const buttonMarkup = `
     <button id="creatorIdButton" type="button" style="margin-top:10px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
-      Show selected sticky creator ID
+      Show selected sticky creator
     </button>
   `;
 
@@ -31,6 +31,12 @@ async function injectCreatorDiagnostic(baseResponse) {
   const script = `
 <script>
 (function () {
+  const KNOWN_MIRO_CREATORS = {
+    "3458764589815876301": "Kristoffer Rask",
+    "3074457347700027993": "Tim Chipman",
+    "3074457362562828515": "Rupert Hanna"
+  };
+
   const creatorIdButton = document.getElementById("creatorIdButton");
   if (!creatorIdButton) return;
 
@@ -54,17 +60,18 @@ async function injectCreatorDiagnostic(baseResponse) {
         return;
       }
 
-      alert("Miro creator ID: " + creatorId);
+      const creatorName = KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
+      alert("Creator: " + creatorName + "\nMiro creator ID: " + creatorId);
     } catch (error) {
       console.error("MIRO CREATOR ID DIAGNOSTIC FAILED:", error);
-      alert("Could not read the sticky creator ID. Check the browser console for details.");
+      alert("Could not read the sticky creator. Check the browser console for details.");
     }
   });
 })();
 </script>
 `;
 
-  if (!patched.includes("MIRO CREATOR ID DIAGNOSTIC FAILED:")) {
+  if (!patched.includes("KNOWN_MIRO_CREATORS")) {
     patched = patched.replace("</body>", script + "\n</body>");
   }
 
