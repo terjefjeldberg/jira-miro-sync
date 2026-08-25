@@ -44,7 +44,8 @@ async function injectCreatorDiagnostic(baseResponse) {
     "3458764589815876301": "Kristoffer Rask",
     "3074457347700027993": "Tim Chipman",
     "3074457362562828515": "Rupert Hanna",
-    "3458764555898556023": "Masud Mahamed"
+    "3458764555898556023": "Jostein Edvardsen",
+    "3074457345777323592": "Ole Kristian Kvarsvik"
   };
 
   function creatorIdentity(createdBy) {
@@ -77,36 +78,68 @@ async function injectCreatorDiagnostic(baseResponse) {
   const copyButton = document.getElementById("copyCreatorIdButton");
   if (!creatorIdButton || !result || !nameElement || !idElement || !copyButton) return;
 
-  creatorIdButton.addEventListener("click", async function () {
-    try {
-      const selected = await miro.board.getSelection();
-      if (!Array.isArray(selected) || selected.length !== 1) {
-        alert("Select exactly one sticky note first.");
-        return;
-      }
+  function clearResult() {
+    nameElement.textContent = "";
+    idElement.value = "";
+    result.style.display = "none";
+  }
 
-      const sticky = selected[0];
-      if (!sticky || sticky.type !== "sticky_note") {
-        alert("The selected item is not a sticky note.");
-        return;
-      }
+  function showSticky(sticky, selectId) {
+    if (!sticky || sticky.type !== "sticky_note") {
+      clearResult();
+      return false;
+    }
 
-      const identity = creatorIdentity(sticky.createdBy);
-      const creatorId = identity.id;
-      if (!creatorId) {
-        alert("Miro did not return a creator ID for this sticky note.");
-        return;
-      }
+    const identity = creatorIdentity(sticky.createdBy);
+    const creatorId = identity.id;
+    if (!creatorId) {
+      clearResult();
+      return false;
+    }
 
-      const creatorName = identity.name || KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
-      nameElement.textContent = creatorName;
-      idElement.value = creatorId;
-      result.style.display = "block";
+    const creatorName = identity.name || KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
+    nameElement.textContent = creatorName;
+    idElement.value = creatorId;
+    result.style.display = "block";
+
+    if (selectId) {
       idElement.focus();
       idElement.select();
+    }
+    return true;
+  }
+
+  async function refreshFromCurrentSelection(selectId) {
+    const selected = await miro.board.getSelection();
+    if (!Array.isArray(selected) || selected.length !== 1) {
+      clearResult();
+      return false;
+    }
+    return showSticky(selected[0], selectId);
+  }
+
+  creatorIdButton.addEventListener("click", async function () {
+    try {
+      const shown = await refreshFromCurrentSelection(true);
+      if (!shown) {
+        alert("Select exactly one sticky note first.");
+      }
     } catch (error) {
       console.error("MIRO CREATOR ID DIAGNOSTIC FAILED:", error);
       alert("Could not read the sticky creator. Check the browser console for details.");
+    }
+  });
+
+  miro.board.ui.on("selection:update", function (event) {
+    try {
+      const items = Array.isArray(event?.items) ? event.items : [];
+      if (items.length === 1 && items[0]?.type === "sticky_note") {
+        showSticky(items[0], false);
+      } else {
+        clearResult();
+      }
+    } catch (error) {
+      console.error("MIRO CREATOR SELECTION UPDATE FAILED:", error);
     }
   });
 
@@ -124,11 +157,15 @@ async function injectCreatorDiagnostic(baseResponse) {
       idElement.select();
     }
   });
+
+  refreshFromCurrentSelection(false).catch(function (error) {
+    console.error("MIRO CREATOR INITIAL REFRESH FAILED:", error);
+  });
 })();
 </script>
 `;
 
-  if (!patched.includes("creatorIdentity(createdBy)")) {
+  if (!patched.includes("MIRO CREATOR SELECTION UPDATE FAILED:")) {
     patched = patched.replace("</body>", script + "\n</body>");
   }
 
