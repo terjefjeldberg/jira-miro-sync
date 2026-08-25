@@ -16,7 +16,7 @@ async function injectCreatorDiagnostic(baseResponse) {
   const html = await baseResponse.clone().text();
   const buttonMarkup = `
     <button id="creatorIdButton" type="button" style="margin-top:10px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
-      Show selected sticky creator ID
+      Show selected item creator ID
     </button>
     <div id="creatorDiagnosticResult" style="display:none;margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;">
       <div style="font-size:12px;margin-bottom:4px;">Miro creator ID</div>
@@ -51,6 +51,10 @@ async function injectCreatorDiagnostic(baseResponse) {
     ).trim();
   }
 
+  function isSupportedItem(item) {
+    return item?.type === "sticky_note" || item?.type === "card";
+  }
+
   const button = document.getElementById("creatorIdButton");
   const result = document.getElementById("creatorDiagnosticResult");
   const idElement = document.getElementById("creatorDiagnosticId");
@@ -64,7 +68,7 @@ async function injectCreatorDiagnostic(baseResponse) {
 
   async function refreshFromCurrentSelection(selectId) {
     const selected = await miro.board.getSelection();
-    if (!Array.isArray(selected) || selected.length !== 1 || selected[0]?.type !== "sticky_note") {
+    if (!Array.isArray(selected) || selected.length !== 1 || !isSupportedItem(selected[0])) {
       clearResult();
       return false;
     }
@@ -87,10 +91,10 @@ async function injectCreatorDiagnostic(baseResponse) {
   button.addEventListener("click", async function () {
     try {
       const shown = await refreshFromCurrentSelection(true);
-      if (!shown) alert("Select exactly one sticky note first.");
+      if (!shown) alert("Select exactly one sticky note or Miro card first.");
     } catch (error) {
       console.error("MIRO CREATOR ID DIAGNOSTIC FAILED:", error);
-      alert("Could not read the sticky creator ID.");
+      alert("Could not read the selected item creator ID.");
     }
   });
 
