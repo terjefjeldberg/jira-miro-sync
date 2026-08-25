@@ -53,6 +53,77 @@ async function validateMiroRequest(request, env, ctx) {
   return await reporterWorker.fetch(probeRequest, env, ctx);
 }
 
+function creatorIdFromItem(item) {
+  const createdBy = item?.createdBy;
+  if (!createdBy) return "";
+  if (typeof createdBy === "string" || typeof createdBy === "number") {
+    return String(createdBy).trim();
+  }
+  return String(
+    createdBy.id ??
+    createdBy.userId ??
+    createdBy.memberId ??
+    createdBy.user?.id ??
+    "",
+  ).trim();
+}
+
+async function readStickyCreatorPage(env, cursor) {
+  if (!env.MIRO_TOKEN || !env.MIRO_BOARD_ID) {
+    return { ok: false, status: 500, reason: "Miro board configuration is missing" };
+  }
+
+  // SAFETY: This scanner is intentionally read-only. It performs exactly one
+  // GET request to Miro per page and never calls PATCH, POST, PUT or DELETE on Miro.
+  const url = new URL(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items`,
+  );
+  url.searchParams.set("type", "sticky_note");
+  url.searchParams.set("limit", "50");
+  if (cursor) url.searchParams.set("cursor", cursor);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${env.MIRO_TOKEN}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      reason: `Miro sticky read failed with HTTP ${response.status}`,
+      error: await response.text(),
+    };
+  }
+
+  const payload = await response.json();
+  const items = Array.isArray(payload?.data) ? payload.data : [];
+  const counts = new Map();
+
+  for (const item of items) {
+    if (item?.type !== "sticky_note") continue;
+    const id = creatorIdFromItem(item);
+    if (!id) continue;
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+
+  const creators = Array.from(counts.entries()).map(([id, count]) => ({
+    id,
+    name: KNOWN_MIRO_CREATORS[id] || "Unknown creator",
+    count,
+  }));
+
+  return {
+    ok: true,
+    itemsScanned: items.length,
+    creators,
+    nextCursor: String(payload?.cursor ?? "").trim() || null,
+  };
+}
+
 function memberIdentity(value) {
   if (!value) return { id: "", name: "", role: "" };
   return {
@@ -82,7 +153,7 @@ async function listBoardMembers(env) {
     url.searchParams.set("limit", "50");
     if (cursor) url.searchParams.set("cursor", cursor);
 
-    const response = await fetch(url.toString(), { headers });
+    const response = await fetch(url.toString(), { method: "GET", headers });
     if (!response.ok) {
       return {
         ok: false,
@@ -121,14 +192,28 @@ async function listBoardMembers(env) {
   return { ok: true, members, count: members.length };
 }
 
-async function injectBoardMemberPanel(baseResponse) {
+async function injectBoardToolsPanel(baseResponse) {
   if (!baseResponse.ok) return baseResponse;
 
   const html = await baseResponse.clone().text();
   const buttonMarkup = `
-    <button id="boardMembersButton" type="button" style="margin-top:10px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
-      Show board members
-    </button>
+    <div style="margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;">
+      <div style="font-size:12px;margin-bottom:8px;"><strong>Read-only diagnostics</strong> — these tools only read Miro data. They do not move, edit or delete board items.</div>
+      <button id="stickyCreatorsButton" type="button" style="background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
+        Scan sticky creators (read-only)
+      </button>
+      <button id="boardMembersButton" type="button" style="margin-left:6px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
+        Show board members
+      </button>
+    </div>
+    <div id="stickyCreatorsResult" style="display:none;margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;max-height:420px;overflow:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <strong id="stickyCreatorsHeading">Sticky creators</strong>
+        <button id="copyAllCreatorsButton" type="button" style="background:#ffffff;color:#4262ff;border:1px solid #4262ff;">Copy all</button>
+      </div>
+      <div id="stickyCreatorsProgress" style="font-size:12px;margin-bottom:8px;"></div>
+      <div id="stickyCreatorsList"></div>
+    </div>
     <div id="boardMembersResult" style="display:none;margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;max-height:380px;overflow:auto;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
         <strong id="boardMembersHeading">Board members</strong>
@@ -141,25 +226,35 @@ async function injectBoardMemberPanel(baseResponse) {
   const buttonTarget = '<button id="convertButton">';
   let patched = html;
 
-  if (patched.includes(buttonTarget) && !patched.includes('id="boardMembersButton"')) {
+  if (patched.includes(buttonTarget) && !patched.includes('id="stickyCreatorsButton"')) {
     patched = patched.replace(buttonTarget, buttonMarkup + "\n" + buttonTarget);
   }
 
   const script = `
 <script>
 (function () {
-  const button = document.getElementById("boardMembersButton");
-  const result = document.getElementById("boardMembersResult");
-  const heading = document.getElementById("boardMembersHeading");
-  const list = document.getElementById("boardMembersList");
-  const copyAll = document.getElementById("copyAllMembersButton");
-  if (!button || !result || !heading || !list || !copyAll) return;
+  const stickyButton = document.getElementById("stickyCreatorsButton");
+  const stickyResult = document.getElementById("stickyCreatorsResult");
+  const stickyHeading = document.getElementById("stickyCreatorsHeading");
+  const stickyProgress = document.getElementById("stickyCreatorsProgress");
+  const stickyList = document.getElementById("stickyCreatorsList");
+  const copyAllCreators = document.getElementById("copyAllCreatorsButton");
 
+  const membersButton = document.getElementById("boardMembersButton");
+  const membersResult = document.getElementById("boardMembersResult");
+  const membersHeading = document.getElementById("boardMembersHeading");
+  const membersList = document.getElementById("boardMembersList");
+  const copyAllMembers = document.getElementById("copyAllMembersButton");
+
+  if (!stickyButton || !stickyResult || !stickyHeading || !stickyProgress || !stickyList || !copyAllCreators) return;
+  if (!membersButton || !membersResult || !membersHeading || !membersList || !copyAllMembers) return;
+
+  let latestCreators = [];
   let latestMembers = [];
 
   async function backendPost(path, body) {
     const token = await miro.board.getIdToken();
-    return await fetch(path, {
+    const response = await fetch(path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -167,14 +262,27 @@ async function injectBoardMemberPanel(baseResponse) {
       },
       body: JSON.stringify(body || {})
     });
+
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error("Backend returned non-JSON response (HTTP " + response.status + "): " + text.slice(0, 160));
+    }
+
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.reason || ("Backend request failed with HTTP " + response.status));
+    }
+    return data;
   }
 
-  function rowFor(member) {
+  function rowFor(entry, includeCount) {
     const row = document.createElement("div");
     row.style.cssText = "padding:8px 0;border-top:1px solid #e4e4e4;";
 
     const name = document.createElement("div");
-    name.textContent = member.name || "Unknown name";
+    name.textContent = (entry.name || "Unknown creator") + (includeCount ? " (" + entry.count + " stickies)" : "");
     name.style.cssText = "font-weight:600;margin-bottom:4px;";
 
     const idLine = document.createElement("div");
@@ -183,7 +291,7 @@ async function injectBoardMemberPanel(baseResponse) {
     const input = document.createElement("input");
     input.type = "text";
     input.readOnly = true;
-    input.value = member.id || "";
+    input.value = entry.id || "";
     input.style.cssText = "box-sizing:border-box;flex:1;min-width:0;padding:6px;border:1px solid #c8c8c8;border-radius:3px;background:#fff;";
 
     const copy = document.createElement("button");
@@ -208,51 +316,105 @@ async function injectBoardMemberPanel(baseResponse) {
     return row;
   }
 
-  async function loadMembers() {
-    button.disabled = true;
-    button.textContent = "Loading board members...";
-    try {
-      const response = await backendPost("/miro-board-members", {});
-      const data = await response.json();
-      if (!response.ok || !data?.ok) {
-        throw new Error(data?.reason || "Could not load board members");
-      }
+  async function scanStickyCreators() {
+    stickyButton.disabled = true;
+    stickyButton.textContent = "Scanning...";
+    stickyResult.style.display = "block";
+    stickyList.innerHTML = "";
 
+    const byId = new Map();
+    let cursor = null;
+    let pages = 0;
+    let totalItems = 0;
+
+    try {
+      do {
+        if (pages >= 200) throw new Error("Safety stop after 200 pages.");
+        const data = await backendPost("/miro-sticky-creators-page", { cursor });
+        pages += 1;
+        totalItems += Number(data.itemsScanned || 0);
+
+        for (const creator of (Array.isArray(data.creators) ? data.creators : [])) {
+          const current = byId.get(creator.id) || { id: creator.id, name: creator.name || "Unknown creator", count: 0 };
+          current.count += Number(creator.count || 0);
+          if (current.name === "Unknown creator" && creator.name && creator.name !== "Unknown creator") current.name = creator.name;
+          byId.set(creator.id, current);
+        }
+
+        stickyProgress.textContent = "Read-only scan: " + totalItems + " stickies checked across " + pages + " page(s). No board changes are performed.";
+        cursor = data.nextCursor || null;
+      } while (cursor);
+
+      latestCreators = Array.from(byId.values()).sort(function (a, b) {
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
+
+      stickyHeading.textContent = "Sticky creators (" + latestCreators.length + ")";
+      stickyList.innerHTML = "";
+      for (const creator of latestCreators) stickyList.appendChild(rowFor(creator, true));
+    } catch (error) {
+      console.error("MIRO READ-ONLY STICKY CREATOR SCAN FAILED:", error);
+      alert(error?.message || "Could not scan sticky creators.");
+    } finally {
+      stickyButton.disabled = false;
+      stickyButton.textContent = "Scan sticky creators (read-only)";
+    }
+  }
+
+  async function loadMembers() {
+    membersButton.disabled = true;
+    membersButton.textContent = "Loading...";
+    try {
+      const data = await backendPost("/miro-board-members", {});
       latestMembers = Array.isArray(data.members) ? data.members : [];
-      heading.textContent = "Board members (" + latestMembers.length + ")";
-      list.innerHTML = "";
-      for (const member of latestMembers) list.appendChild(rowFor(member));
-      result.style.display = "block";
+      membersHeading.textContent = "Board members (" + latestMembers.length + ")";
+      membersList.innerHTML = "";
+      for (const member of latestMembers) membersList.appendChild(rowFor(member, false));
+      membersResult.style.display = "block";
     } catch (error) {
       console.error("MIRO BOARD MEMBER LIST FAILED:", error);
       alert(error?.message || "Could not load board members.");
     } finally {
-      button.disabled = false;
-      button.textContent = "Show board members";
+      membersButton.disabled = false;
+      membersButton.textContent = "Show board members";
     }
   }
 
-  button.addEventListener("click", loadMembers);
+  stickyButton.addEventListener("click", scanStickyCreators);
+  membersButton.addEventListener("click", loadMembers);
 
-  copyAll.addEventListener("click", async function () {
+  copyAllCreators.addEventListener("click", async function () {
+    if (!latestCreators.length) return;
+    const text = latestCreators.map(function (creator) {
+      return (creator.name || "Unknown creator") + " - " + creator.id + " - " + creator.count + " stickies";
+    }).join("\\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      copyAllCreators.textContent = "Copied";
+      setTimeout(function () { copyAllCreators.textContent = "Copy all"; }, 1000);
+    } catch {
+      console.log(text);
+    }
+  });
+
+  copyAllMembers.addEventListener("click", async function () {
     if (!latestMembers.length) return;
     const text = latestMembers.map(function (member) {
       return (member.name || "Unknown name") + " - " + member.id;
     }).join("\\n");
     try {
       await navigator.clipboard.writeText(text);
-      copyAll.textContent = "Copied";
-      setTimeout(function () { copyAll.textContent = "Copy all"; }, 1000);
+      copyAllMembers.textContent = "Copied";
+      setTimeout(function () { copyAllMembers.textContent = "Copy all"; }, 1000);
     } catch {
       console.log(text);
-      alert("Could not copy automatically. The member list was written to the console.");
     }
   });
 })();
 </script>
 `;
 
-  if (!patched.includes("MIRO BOARD MEMBER LIST FAILED:")) {
+  if (!patched.includes("MIRO READ-ONLY STICKY CREATOR SCAN FAILED:")) {
     patched = patched.replace("</body>", script + "\n</body>");
   }
 
@@ -262,6 +424,19 @@ async function injectBoardMemberPanel(baseResponse) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/miro-sticky-creators-page") {
+      const authProbe = await validateMiroRequest(request, env, ctx);
+      if (!authProbe.ok) return authProbe;
+
+      let body = {};
+      try { body = await request.clone().json(); } catch {}
+      const page = await readStickyCreatorPage(env, String(body?.cursor ?? "").trim());
+      if (!page.ok) {
+        return jsonResponse({ ok: false, reason: page.reason, error: page.error }, page.status || 500);
+      }
+      return jsonResponse(page);
+    }
 
     if (request.method === "POST" && url.pathname === "/miro-board-members") {
       const authProbe = await validateMiroRequest(request, env, ctx);
@@ -276,7 +451,7 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/miro-panel") {
       const response = await reporterWorker.fetch(request, env, ctx);
-      return await injectBoardMemberPanel(response);
+      return await injectBoardToolsPanel(response);
     }
 
     return reporterWorker.fetch(request, env, ctx);
