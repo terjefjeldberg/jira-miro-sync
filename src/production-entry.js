@@ -5,11 +5,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Sticky conversion, reporter diagnostics and panel tools use the production reporter flow.
+    // Sticky conversion and the selected-sticky creator ID panel use the production reporter flow.
     if (
       (request.method === "POST" && url.pathname === "/sticky-to-jira") ||
-      (request.method === "POST" && url.pathname === "/miro-board-members") ||
-      (request.method === "POST" && url.pathname === "/miro-sticky-creators-page") ||
       (request.method === "GET" && url.pathname === "/miro-panel")
     ) {
       return reporterWorker.fetch(request, env, ctx);
