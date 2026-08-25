@@ -1,4 +1,4 @@
-import reporterWorker from "./reporter-jira-picker-entry.js";
+import reporterWorker from "./reporter-panel-diagnostic-entry.js";
 import previewWorker from "./preview-entry-v2.js";
 
 export default {
