@@ -23,6 +23,16 @@ const FIXED_MIRO_USERS = {
   "3458764544817410612": { displayName: "Zandrex Ramos Camagon", email: "" },
   "3074457352976810809": { displayName: "Erwin Berkers", email: "" },
   "3074457352976810811": { displayName: "Manuel Gonzalez", email: "" },
+  "3074457346177899037": { displayName: "Lirian Rusiti", email: "" },
+  "3074457345929923505": { displayName: "Andrea Dallera", email: "" },
+  "3458764634714855820": { displayName: "Gjermund Madsen", email: "" },
+  "3458764636149340448": { displayName: "Prem Wycisk", email: "" },
+  "3458764648050732223": { displayName: "Viktor Österdahl", email: "" },
+  "3458764666715690327": { displayName: "Josef Aden", email: "" },
+  "3458764650779944565": { displayName: "Igor Lima", email: "" },
+  "3458764617111887828": { displayName: "Toda Yoshinori", email: "" },
+  "3458764681147070850": { displayName: "Elias Vesterlund", email: "" },
+  "3458764636149340450": { displayName: "Rafal Mnich", email: "" },
 };
 
 function jsonResponse(data, status = 200) {
