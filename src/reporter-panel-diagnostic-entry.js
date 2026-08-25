@@ -44,8 +44,11 @@ async function injectCreatorDiagnostic(baseResponse) {
     "3458764589815876301": "Kristoffer Rask",
     "3074457347700027993": "Tim Chipman",
     "3074457362562828515": "Rupert Hanna",
-    "3458764555898556023": "Jostein Edvardsen",
-    "3074457345777323592": "Ole Kristian Kvarsvik"
+    "3074457346177807607": "Robin Grønvold",
+    "3458764570480950130": "Terje Fjeldberg",
+    "3074457345777323592": "Ole Kristian Kvarsvik",
+    "3458764555898556023": "Masud Mahamed",
+    "3074457366743197593": "Jostein Edvarsen"
   };
 
   function creatorIdentity(createdBy) {
