@@ -19,6 +19,15 @@ async function injectCreatorDiagnostic(baseResponse) {
     <button id="creatorIdButton" type="button" style="margin-top:10px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
       Show selected sticky creator
     </button>
+    <div id="creatorDiagnosticResult" style="display:none;margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;">
+      <div style="font-size:12px;margin-bottom:4px;">Creator</div>
+      <div id="creatorDiagnosticName" style="font-weight:600;margin-bottom:8px;user-select:text;"></div>
+      <div style="font-size:12px;margin-bottom:4px;">Miro creator ID</div>
+      <input id="creatorDiagnosticId" type="text" readonly style="box-sizing:border-box;width:100%;padding:7px;border:1px solid #c8c8c8;border-radius:3px;background:#ffffff;user-select:text;" />
+      <button id="copyCreatorIdButton" type="button" style="margin-top:8px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
+        Copy ID
+      </button>
+    </div>
   `;
 
   const buttonTarget = '<button id="convertButton">';
@@ -38,8 +47,35 @@ async function injectCreatorDiagnostic(baseResponse) {
     "3458764555898556023": "Masud Mahamed"
   };
 
+  function creatorIdentity(createdBy) {
+    if (!createdBy) return { id: "", name: "" };
+    if (typeof createdBy === "string" || typeof createdBy === "number") {
+      return { id: String(createdBy).trim(), name: "" };
+    }
+    return {
+      id: String(
+        createdBy.id ??
+        createdBy.userId ??
+        createdBy.memberId ??
+        createdBy.user?.id ??
+        ""
+      ).trim(),
+      name: String(
+        createdBy.name ??
+        createdBy.displayName ??
+        createdBy.user?.name ??
+        createdBy.user?.displayName ??
+        ""
+      ).trim()
+    };
+  }
+
   const creatorIdButton = document.getElementById("creatorIdButton");
-  if (!creatorIdButton) return;
+  const result = document.getElementById("creatorDiagnosticResult");
+  const nameElement = document.getElementById("creatorDiagnosticName");
+  const idElement = document.getElementById("creatorDiagnosticId");
+  const copyButton = document.getElementById("copyCreatorIdButton");
+  if (!creatorIdButton || !result || !nameElement || !idElement || !copyButton) return;
 
   creatorIdButton.addEventListener("click", async function () {
     try {
@@ -55,24 +91,44 @@ async function injectCreatorDiagnostic(baseResponse) {
         return;
       }
 
-      const creatorId = String(sticky.createdBy || "").trim();
+      const identity = creatorIdentity(sticky.createdBy);
+      const creatorId = identity.id;
       if (!creatorId) {
         alert("Miro did not return a creator ID for this sticky note.");
         return;
       }
 
-      const creatorName = KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
-      alert("Creator: " + creatorName + "\\nMiro creator ID: " + creatorId);
+      const creatorName = identity.name || KNOWN_MIRO_CREATORS[creatorId] || "Unknown creator";
+      nameElement.textContent = creatorName;
+      idElement.value = creatorId;
+      result.style.display = "block";
+      idElement.focus();
+      idElement.select();
     } catch (error) {
       console.error("MIRO CREATOR ID DIAGNOSTIC FAILED:", error);
       alert("Could not read the sticky creator. Check the browser console for details.");
+    }
+  });
+
+  copyButton.addEventListener("click", async function () {
+    const value = String(idElement.value || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      copyButton.textContent = "Copied";
+      setTimeout(function () {
+        copyButton.textContent = "Copy ID";
+      }, 1200);
+    } catch {
+      idElement.focus();
+      idElement.select();
     }
   });
 })();
 </script>
 `;
 
-  if (!patched.includes("KNOWN_MIRO_CREATORS")) {
+  if (!patched.includes("creatorIdentity(createdBy)")) {
     patched = patched.replace("</body>", script + "\n</body>");
   }
 
