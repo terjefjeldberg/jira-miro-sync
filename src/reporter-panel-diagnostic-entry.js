@@ -101,25 +101,29 @@ async function readStickyCreatorPage(env, cursor) {
 
   const payload = await response.json();
   const items = Array.isArray(payload?.data) ? payload.data : [];
-  const counts = new Map();
+  const creatorsById = new Map();
 
   for (const item of items) {
     if (item?.type !== "sticky_note") continue;
     const id = creatorIdFromItem(item);
-    if (!id) continue;
-    counts.set(id, (counts.get(id) || 0) + 1);
-  }
+    const stickyId = String(item?.id ?? "").trim();
+    if (!id || !stickyId) continue;
 
-  const creators = Array.from(counts.entries()).map(([id, count]) => ({
-    id,
-    name: KNOWN_MIRO_CREATORS[id] || "Unknown creator",
-    count,
-  }));
+    const current = creatorsById.get(id) || {
+      id,
+      name: KNOWN_MIRO_CREATORS[id] || "Unknown creator",
+      count: 0,
+      sampleStickyId: stickyId,
+    };
+    current.count += 1;
+    if (!current.sampleStickyId) current.sampleStickyId = stickyId;
+    creatorsById.set(id, current);
+  }
 
   return {
     ok: true,
     itemsScanned: items.length,
-    creators,
+    creators: Array.from(creatorsById.values()),
     nextCursor: String(payload?.cursor ?? "").trim() || null,
   };
 }
@@ -198,7 +202,7 @@ async function injectBoardToolsPanel(baseResponse) {
   const html = await baseResponse.clone().text();
   const buttonMarkup = `
     <div style="margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;">
-      <div style="font-size:12px;margin-bottom:8px;"><strong>Read-only diagnostics</strong> — these tools only read Miro data. They do not move, edit or delete board items.</div>
+      <div style="font-size:12px;margin-bottom:8px;"><strong>Read-only diagnostics</strong> — scanning only reads Miro data. Selecting a sticky only changes your current UI selection; it does not move, edit or delete anything.</div>
       <button id="stickyCreatorsButton" type="button" style="background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
         Scan sticky creators (read-only)
       </button>
@@ -277,42 +281,57 @@ async function injectBoardToolsPanel(baseResponse) {
     return data;
   }
 
-  function rowFor(entry, includeCount) {
+  async function selectStickyOnly(stickyId, button) {
+    const id = String(stickyId || "").trim();
+    if (!id) return;
+
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Selecting...";
+    try {
+      // UI selection only. No zoom, viewport movement, sync(), PATCH, PUT or DELETE.
+      await miro.board.deselect();
+      const selected = await miro.board.select({ id: id });
+      if (!Array.isArray(selected) || !selected.some(function (item) { return String(item?.id || "") === id; })) {
+        throw new Error("Miro did not select the sticky.");
+      }
+      button.textContent = "Selected";
+      setTimeout(function () { button.textContent = originalText; }, 1200);
+    } catch (error) {
+      console.error("MIRO SAFE STICKY SELECT FAILED:", error);
+      button.textContent = originalText;
+      alert(error?.message || "Could not select the sticky.");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function rowFor(entry, mode) {
     const row = document.createElement("div");
     row.style.cssText = "padding:8px 0;border-top:1px solid #e4e4e4;";
 
     const name = document.createElement("div");
-    name.textContent = (entry.name || "Unknown creator") + (includeCount ? " (" + entry.count + " stickies)" : "");
-    name.style.cssText = "font-weight:600;margin-bottom:4px;";
+    name.textContent = entry.name || (mode === "creator" ? "Unknown creator" : "Unknown name");
+    name.style.cssText = "font-weight:600;margin-bottom:5px;";
 
-    const idLine = document.createElement("div");
-    idLine.style.cssText = "display:flex;gap:6px;align-items:center;";
+    const idLabel = document.createElement("div");
+    idLabel.textContent = "Miro user ID: " + String(entry.id || "");
+    idLabel.style.cssText = "font-family:monospace;font-size:12px;user-select:text;overflow-wrap:anywhere;margin-bottom:6px;";
 
-    const input = document.createElement("input");
-    input.type = "text";
-    input.readOnly = true;
-    input.value = entry.id || "";
-    input.style.cssText = "box-sizing:border-box;flex:1;min-width:0;padding:6px;border:1px solid #c8c8c8;border-radius:3px;background:#fff;";
-
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.textContent = "Copy";
-    copy.style.cssText = "background:#fff;color:#4262ff;border:1px solid #4262ff;";
-    copy.addEventListener("click", async function () {
-      try {
-        await navigator.clipboard.writeText(input.value);
-        copy.textContent = "Copied";
-        setTimeout(function () { copy.textContent = "Copy"; }, 1000);
-      } catch {
-        input.focus();
-        input.select();
-      }
-    });
-
-    idLine.appendChild(input);
-    idLine.appendChild(copy);
     row.appendChild(name);
-    row.appendChild(idLine);
+    row.appendChild(idLabel);
+
+    if (mode === "creator" && entry.sampleStickyId) {
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.textContent = "Select one sticky";
+      selectButton.style.cssText = "background:#fff;color:#4262ff;border:1px solid #4262ff;";
+      selectButton.addEventListener("click", function () {
+        selectStickyOnly(entry.sampleStickyId, selectButton);
+      });
+      row.appendChild(selectButton);
+    }
+
     return row;
   }
 
@@ -335,13 +354,19 @@ async function injectBoardToolsPanel(baseResponse) {
         totalItems += Number(data.itemsScanned || 0);
 
         for (const creator of (Array.isArray(data.creators) ? data.creators : [])) {
-          const current = byId.get(creator.id) || { id: creator.id, name: creator.name || "Unknown creator", count: 0 };
+          const current = byId.get(creator.id) || {
+            id: creator.id,
+            name: creator.name || "Unknown creator",
+            count: 0,
+            sampleStickyId: creator.sampleStickyId || ""
+          };
           current.count += Number(creator.count || 0);
+          if (!current.sampleStickyId && creator.sampleStickyId) current.sampleStickyId = creator.sampleStickyId;
           if (current.name === "Unknown creator" && creator.name && creator.name !== "Unknown creator") current.name = creator.name;
           byId.set(creator.id, current);
         }
 
-        stickyProgress.textContent = "Read-only scan: " + totalItems + " stickies checked across " + pages + " page(s). No board changes are performed.";
+        stickyProgress.textContent = "Read-only scan: " + totalItems + " stickies checked across " + pages + " page(s). No board items are changed.";
         cursor = data.nextCursor || null;
       } while (cursor);
 
@@ -351,7 +376,7 @@ async function injectBoardToolsPanel(baseResponse) {
 
       stickyHeading.textContent = "Sticky creators (" + latestCreators.length + ")";
       stickyList.innerHTML = "";
-      for (const creator of latestCreators) stickyList.appendChild(rowFor(creator, true));
+      for (const creator of latestCreators) stickyList.appendChild(rowFor(creator, "creator"));
     } catch (error) {
       console.error("MIRO READ-ONLY STICKY CREATOR SCAN FAILED:", error);
       alert(error?.message || "Could not scan sticky creators.");
@@ -369,7 +394,7 @@ async function injectBoardToolsPanel(baseResponse) {
       latestMembers = Array.isArray(data.members) ? data.members : [];
       membersHeading.textContent = "Board members (" + latestMembers.length + ")";
       membersList.innerHTML = "";
-      for (const member of latestMembers) membersList.appendChild(rowFor(member, false));
+      for (const member of latestMembers) membersList.appendChild(rowFor(member, "member"));
       membersResult.style.display = "block";
     } catch (error) {
       console.error("MIRO BOARD MEMBER LIST FAILED:", error);
@@ -386,7 +411,7 @@ async function injectBoardToolsPanel(baseResponse) {
   copyAllCreators.addEventListener("click", async function () {
     if (!latestCreators.length) return;
     const text = latestCreators.map(function (creator) {
-      return (creator.name || "Unknown creator") + " - " + creator.id + " - " + creator.count + " stickies";
+      return (creator.name || "Unknown creator") + " - " + creator.id;
     }).join("\\n");
     try {
       await navigator.clipboard.writeText(text);
@@ -414,7 +439,7 @@ async function injectBoardToolsPanel(baseResponse) {
 </script>
 `;
 
-  if (!patched.includes("MIRO READ-ONLY STICKY CREATOR SCAN FAILED:")) {
+  if (!patched.includes("MIRO SAFE STICKY SELECT FAILED:")) {
     patched = patched.replace("</body>", script + "\n</body>");
   }
 
