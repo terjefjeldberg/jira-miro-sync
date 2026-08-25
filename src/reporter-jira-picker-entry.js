@@ -23,6 +23,41 @@ function normalizeName(value) {
   return String(value ?? "").trim().toLocaleLowerCase();
 }
 
+function reporterCacheKey(miroCreatorId) {
+  return `reporter-account:${String(miroCreatorId ?? "").trim()}`;
+}
+
+async function readCachedReporter(env, miroCreatorId) {
+  if (!env.CARD_MAP || !miroCreatorId) return null;
+
+  try {
+    const cached = await env.CARD_MAP.get(reporterCacheKey(miroCreatorId), "json");
+    const accountId = String(cached?.accountId ?? "").trim();
+    if (!accountId) return null;
+
+    return {
+      ok: true,
+      accountId,
+      displayName: String(cached?.displayName ?? "").trim(),
+      source: "kv-cache",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedReporter(env, miroCreatorId, reporter) {
+  if (!env.CARD_MAP || !miroCreatorId || !reporter?.accountId) return;
+
+  await env.CARD_MAP.put(
+    reporterCacheKey(miroCreatorId),
+    JSON.stringify({
+      accountId: String(reporter.accountId),
+      displayName: String(reporter.displayName ?? ""),
+    }),
+  );
+}
+
 function jiraConfig(env) {
   return {
     base: `https://api.atlassian.com/ex/jira/${encodeURIComponent(env.JIRA_CLOUD_ID)}/rest/api/3`,
@@ -106,7 +141,10 @@ async function findWithIssueSearch(env, displayName) {
   return { ok: true, accountId: String(user.accountId), displayName: String(user.displayName ?? displayName), source: "issue-search-all-projects" };
 }
 
-async function resolveJiraReporter(env, displayName) {
+async function resolveJiraReporter(env, displayName, miroCreatorId) {
+  const cached = await readCachedReporter(env, miroCreatorId);
+  if (cached) return cached;
+
   const picker = await findWithUserPicker(env, displayName);
   if (picker.ok) return picker;
 
@@ -161,11 +199,68 @@ async function updateReporter(env, issueKey, reporter) {
   return { ok: true };
 }
 
+async function createAndApplyReporter(request, env, reporter, miroCreatorId, miroCreatorName) {
+  const createResponse = await previewWorker.fetch(request.clone(), env);
+  const created = await readJson(createResponse);
+  if (!createResponse.ok || !created?.ok || !created?.created || !/^SN-\d+$/i.test(String(created?.issueKey ?? ""))) {
+    return createResponse;
+  }
+
+  const update = await updateReporter(env, String(created.issueKey), reporter);
+  if (!update.ok) {
+    return jsonResponse({
+      ...created,
+      ok: false,
+      reason: update.reason,
+      reporterSync: update,
+      reporterResolvedFrom: {
+        miroCreatorId,
+        miroCreatorName,
+        jiraReporterName: reporter.displayName,
+        jiraReporterAccountId: reporter.accountId,
+        jiraReporterSource: reporter.source,
+      },
+    }, 409);
+  }
+
+  await writeCachedReporter(env, miroCreatorId, reporter);
+
+  return jsonResponse({
+    ...created,
+    reporterSync: {
+      ok: true,
+      applied: true,
+      miroCreatorId,
+      miroCreatorName,
+      jiraReporterName: reporter.displayName,
+      jiraReporterAccountId: reporter.accountId,
+      jiraReporterSource: reporter.source,
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method !== "POST" || url.pathname !== "/sticky-to-jira") {
       return fallbackWorker.fetch(request, env, ctx);
+    }
+
+    let requestBody = null;
+    try { requestBody = await request.clone().json(); } catch {}
+
+    const claimedMiroCreatorId = String(requestBody?.createdBy ?? "").trim();
+    if (claimedMiroCreatorId) {
+      const cachedReporter = await readCachedReporter(env, claimedMiroCreatorId);
+      if (cachedReporter) {
+        return await createAndApplyReporter(
+          request,
+          env,
+          cachedReporter,
+          claimedMiroCreatorId,
+          cachedReporter.displayName,
+        );
+      }
     }
 
     const firstResponse = await fallbackWorker.fetch(request.clone(), env, ctx);
@@ -186,7 +281,7 @@ export default {
       return firstResponse;
     }
 
-    const reporter = await resolveJiraReporter(env, miroCreatorName);
+    const reporter = await resolveJiraReporter(env, miroCreatorName, miroCreatorId);
     if (!reporter.ok) {
       return jsonResponse({
         ...firstError,
@@ -198,40 +293,12 @@ export default {
       }, 409);
     }
 
-    const createResponse = await previewWorker.fetch(request.clone(), env, ctx);
-    const created = await readJson(createResponse);
-    if (!createResponse.ok || !created?.ok || !created?.created || !/^SN-\d+$/i.test(String(created?.issueKey ?? ""))) {
-      return createResponse;
-    }
-
-    const update = await updateReporter(env, String(created.issueKey), reporter);
-    if (!update.ok) {
-      return jsonResponse({
-        ...created,
-        ok: false,
-        reason: update.reason,
-        reporterSync: update,
-        reporterResolvedFrom: {
-          miroCreatorId,
-          miroCreatorName,
-          jiraReporterName: reporter.displayName,
-          jiraReporterAccountId: reporter.accountId,
-          jiraReporterSource: reporter.source,
-        },
-      }, 409);
-    }
-
-    return jsonResponse({
-      ...created,
-      reporterSync: {
-        ok: true,
-        applied: true,
-        miroCreatorId,
-        miroCreatorName,
-        jiraReporterName: reporter.displayName,
-        jiraReporterAccountId: reporter.accountId,
-        jiraReporterSource: reporter.source,
-      },
-    });
+    return await createAndApplyReporter(
+      request,
+      env,
+      reporter,
+      miroCreatorId,
+      miroCreatorName,
+    );
   },
 };
