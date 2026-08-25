@@ -9,10 +9,20 @@ const CORS_HEADERS = {
 };
 
 const FIXED_MIRO_USERS = {
-  "3458764589815876301": {
-    displayName: "Kristoffer Rask",
-    email: "",
-  },
+  "3458764589815876301": { displayName: "Kristoffer Rask", email: "" },
+  "3074457347700027993": { displayName: "Tim Chipman", email: "" },
+  "3074457362562828515": { displayName: "Rupert Hanna", email: "" },
+  "3074457346177807607": { displayName: "Robin Grønvold", email: "" },
+  "3458764570480950130": { displayName: "Terje Fjeldberg", email: "" },
+  "3074457345777323592": { displayName: "Ole Kristian Kvarsvik", email: "" },
+  "3458764555898556023": { displayName: "Masud Mahamed", email: "" },
+  "3074457366743197593": { displayName: "Jostein Edvardsen", email: "" },
+  "3074457346139208205": { displayName: "Kristian Samuelsen", email: "" },
+  "3458764561305764945": { displayName: "Mathias Hellqvist", email: "" },
+  "99386030": { displayName: "Christoffer Henne", email: "" },
+  "3458764544817410612": { displayName: "Zandrex Ramos Camagon", email: "" },
+  "3074457352976810809": { displayName: "Erwin Berkers", email: "" },
+  "3074457352976810811": { displayName: "Manuel Gonzalez", email: "" },
 };
 
 function jsonResponse(data, status = 200) {
