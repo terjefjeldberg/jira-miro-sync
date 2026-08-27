@@ -160,6 +160,16 @@ async function injectCreatorDiagnostic(baseResponse) {
         Copy ID
       </button>
     </div>
+    <button id="frameIdButton" type="button" style="margin-top:10px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
+      Show selected frame ID
+    </button>
+    <div id="frameDiagnosticResult" style="display:none;margin-top:10px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;background:#f7f7f7;">
+      <div style="font-size:12px;margin-bottom:4px;">Miro frame ID</div>
+      <input id="frameDiagnosticId" type="text" readonly style="box-sizing:border-box;width:100%;padding:7px;border:1px solid #c8c8c8;border-radius:3px;background:#ffffff;user-select:text;" />
+      <button id="copyFrameIdButton" type="button" style="margin-top:8px;background:#ffffff;color:#4262ff;border:1px solid #4262ff;">
+        Copy ID
+      </button>
+    </div>
   `;
 
   const buttonTarget = '<button id="convertButton">';
@@ -194,11 +204,20 @@ async function injectCreatorDiagnostic(baseResponse) {
   const result = document.getElementById("creatorDiagnosticResult");
   const idElement = document.getElementById("creatorDiagnosticId");
   const copyButton = document.getElementById("copyCreatorIdButton");
-  if (!button || !result || !idElement || !copyButton) return;
+  const frameButton = document.getElementById("frameIdButton");
+  const frameResult = document.getElementById("frameDiagnosticResult");
+  const frameIdElement = document.getElementById("frameDiagnosticId");
+  const copyFrameButton = document.getElementById("copyFrameIdButton");
+  if (!button || !result || !idElement || !copyButton || !frameButton || !frameResult || !frameIdElement || !copyFrameButton) return;
 
   function clearResult() {
     idElement.value = "";
     result.style.display = "none";
+  }
+
+  function clearFrameResult() {
+    frameIdElement.value = "";
+    frameResult.style.display = "none";
   }
 
   async function refreshFromCurrentSelection(selectId) {
@@ -223,6 +242,28 @@ async function injectCreatorDiagnostic(baseResponse) {
     return true;
   }
 
+  async function refreshFrameFromCurrentSelection(selectId) {
+    const selected = await miro.board.getSelection();
+    if (!Array.isArray(selected) || selected.length !== 1 || selected[0]?.type !== "frame") {
+      clearFrameResult();
+      return false;
+    }
+
+    const id = String(selected[0].id || "").trim();
+    if (!id) {
+      clearFrameResult();
+      return false;
+    }
+
+    frameIdElement.value = id;
+    frameResult.style.display = "block";
+    if (selectId) {
+      frameIdElement.focus();
+      frameIdElement.select();
+    }
+    return true;
+  }
+
   button.addEventListener("click", async function () {
     try {
       const shown = await refreshFromCurrentSelection(true);
@@ -233,9 +274,22 @@ async function injectCreatorDiagnostic(baseResponse) {
     }
   });
 
+  frameButton.addEventListener("click", async function () {
+    try {
+      const shown = await refreshFrameFromCurrentSelection(true);
+      if (!shown) alert("Select exactly one Miro frame first.");
+    } catch (error) {
+      console.error("MIRO FRAME ID DIAGNOSTIC FAILED:", error);
+      alert("Could not read the selected frame ID.");
+    }
+  });
+
   miro.board.ui.on("selection:update", function () {
     refreshFromCurrentSelection(false).catch(function (error) {
       console.error("MIRO CREATOR SELECTION UPDATE FAILED:", error);
+    });
+    refreshFrameFromCurrentSelection(false).catch(function (error) {
+      console.error("MIRO FRAME SELECTION UPDATE FAILED:", error);
     });
   });
 
@@ -252,8 +306,24 @@ async function injectCreatorDiagnostic(baseResponse) {
     }
   });
 
+  copyFrameButton.addEventListener("click", async function () {
+    const value = String(frameIdElement.value || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      copyFrameButton.textContent = "Copied";
+      setTimeout(function () { copyFrameButton.textContent = "Copy ID"; }, 1000);
+    } catch {
+      frameIdElement.focus();
+      frameIdElement.select();
+    }
+  });
+
   refreshFromCurrentSelection(false).catch(function (error) {
     console.error("MIRO CREATOR INITIAL REFRESH FAILED:", error);
+  });
+  refreshFrameFromCurrentSelection(false).catch(function (error) {
+    console.error("MIRO FRAME INITIAL REFRESH FAILED:", error);
   });
 })();
 </script>
