@@ -31,6 +31,13 @@ function jsonResponseLike(original, data) {
   });
 }
 
+function miroHeaders(env) {
+  return {
+    Authorization: `Bearer ${env.MIRO_TOKEN}`,
+    Accept: "application/json",
+  };
+}
+
 function svgEscape(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -205,6 +212,84 @@ async function readJiraCardData(env, issueKey) {
   };
 }
 
+function issueKeyFromImage(item) {
+  if (item?.type !== "image") return null;
+  const title = String(item?.data?.title ?? "").trim();
+  const match = title.match(/^CUSTOM_JIRA_CARD:(SN-\d+)$/i);
+  return match ? normalizeIssueKey(match[1]) : null;
+}
+
+async function listIncomingIssueImages(env, issueKey) {
+  const matches = [];
+  let cursor = null;
+
+  for (let page = 0; page < 10; page += 1) {
+    const url = new URL(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items`);
+    url.searchParams.set("parent_item_id", INCOMING_FRAME_ID);
+    url.searchParams.set("limit", "50");
+    if (cursor) url.searchParams.set("cursor", cursor);
+
+    const response = await fetch(url.toString(), { headers: miroHeaders(env) });
+    if (!response.ok) break;
+
+    const data = await response.json();
+    for (const item of Array.isArray(data?.data) ? data.data : []) {
+      if (issueKeyFromImage(item) === issueKey && item?.id) {
+        matches.push(item);
+      }
+    }
+
+    cursor = String(data?.cursor ?? "").trim() || null;
+    if (!cursor) break;
+  }
+
+  return matches;
+}
+
+async function removeMiroImage(env, itemId) {
+  const response = await fetch(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`,
+    {
+      method: "DELETE",
+      headers: miroHeaders(env),
+    },
+  );
+  return response.ok || response.status === 404;
+}
+
+async function deduplicateIncomingIssue(env, issueKey, createdItemId) {
+  // Two Jira automations/webhook deliveries can arrive almost simultaneously.
+  // KV is not an atomic lock, so both requests may pass the pre-create mapping
+  // check. Give Miro a moment to expose both items, then deterministically keep
+  // one card and remove the others.
+  await new Promise(resolve => setTimeout(resolve, 700));
+
+  const matches = await listIncomingIssueImages(env, issueKey);
+  if (matches.length <= 1) {
+    const keepId = String(matches[0]?.id ?? createdItemId);
+    await env.CARD_MAP.put(customCardMapKey(issueKey), keepId);
+    return { keptItemId: keepId, removedItemIds: [] };
+  }
+
+  const ids = matches
+    .map(item => String(item.id))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  const keepId = ids[0];
+  const duplicateIds = ids.slice(1);
+  const removedItemIds = [];
+
+  for (const duplicateId of duplicateIds) {
+    if (await removeMiroImage(env, duplicateId)) {
+      removedItemIds.push(duplicateId);
+    }
+  }
+
+  await env.CARD_MAP.put(customCardMapKey(issueKey), keepId);
+  return { keptItemId: keepId, removedItemIds };
+}
+
 async function createWithMultipart(env, issueKey, position) {
   const existingMapping = await env.CARD_MAP.get(customCardMapKey(issueKey));
   if (existingMapping) {
@@ -230,10 +315,7 @@ async function createWithMultipart(env, issueKey, position) {
     `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images`,
     {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.MIRO_TOKEN}`,
-        Accept: "application/json",
-      },
+      headers: miroHeaders(env),
       body: formData,
     },
   );
@@ -259,8 +341,7 @@ async function createWithMultipart(env, issueKey, position) {
     {
       method: "PATCH",
       headers: {
-        Authorization: `Bearer ${env.MIRO_TOKEN}`,
-        Accept: "application/json",
+        ...miroHeaders(env),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -279,16 +360,7 @@ async function createWithMultipart(env, issueKey, position) {
   if (!patchResponse.ok) {
     const error = await patchResponse.text();
     try {
-      await fetch(
-        `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${env.MIRO_TOKEN}`,
-            Accept: "application/json",
-          },
-        },
-      );
+      await removeMiroImage(env, itemId);
     } catch {}
 
     return {
@@ -302,15 +374,25 @@ async function createWithMultipart(env, issueKey, position) {
 
   await env.CARD_MAP.put(customCardMapKey(issueKey), itemId);
 
+  let dedupe = null;
+  try {
+    dedupe = await deduplicateIncomingIssue(env, issueKey, itemId);
+  } catch (error) {
+    console.warn("JIRA -> MIRO Incoming dedupe failed:", issueKey, error);
+  }
+
+  const finalItemId = String(dedupe?.keptItemId ?? itemId);
+
   return {
     ok: true,
     created: true,
     mapped: true,
-    itemId,
+    itemId: finalItemId,
     issueKey,
     frameId: INCOMING_FRAME_ID,
     position,
     uploadMode: "multipart-svg-then-patch",
+    dedupe,
   };
 }
 
