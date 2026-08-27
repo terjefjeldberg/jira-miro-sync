@@ -1,5 +1,5 @@
 import reporterWorker from "./reporter-panel-diagnostic-entry.js";
-import previewWorker from "./incoming-create-any-status-entry.js";
+import previewWorker from "./incoming-multipart-fix-entry.js";
 
 function responseWithText(original, text) {
   const headers = new Headers(original.headers);
