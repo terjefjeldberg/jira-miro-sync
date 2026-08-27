@@ -8,6 +8,8 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
+const ORIGINAL_MIRO_CREATED_FIELD_ID = "customfield_11207";
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -175,6 +177,54 @@ function jiraErrorMessage(raw) {
   return String(raw ?? "").trim();
 }
 
+function formatJiraDateTime(value) {
+  const date = new Date(String(value ?? ""));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().replace(/Z$/, "+0000");
+}
+
+async function readOriginalMiroCreated(env, stickyId) {
+  const id = String(stickyId ?? "").trim();
+  if (!id || !env.MIRO_TOKEN || !env.MIRO_BOARD_ID) {
+    return { ok: false, reason: "Missing sticky ID or Miro REST configuration" };
+  }
+
+  const response = await fetch(
+    `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items/${encodeURIComponent(id)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${env.MIRO_TOKEN}`,
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: `Miro item lookup returned HTTP ${response.status}`,
+      miroStatus: response.status,
+    };
+  }
+
+  const item = await response.json();
+  const rawCreatedAt = String(item?.createdAt ?? "").trim();
+  const jiraCreatedAt = formatJiraDateTime(rawCreatedAt);
+  if (!jiraCreatedAt) {
+    return {
+      ok: false,
+      reason: "Miro did not return a valid createdAt timestamp",
+      rawCreatedAt,
+    };
+  }
+
+  return {
+    ok: true,
+    rawCreatedAt,
+    jiraCreatedAt,
+  };
+}
+
 async function updateReporter(env, issueKey, reporter) {
   const { base, headers } = jiraConfig(env);
   const response = await fetch(`${base}/issue/${encodeURIComponent(issueKey)}`, {
@@ -199,7 +249,54 @@ async function updateReporter(env, issueKey, reporter) {
   return { ok: true };
 }
 
+async function updateOriginalMiroCreated(env, issueKey, originalCreated) {
+  if (!originalCreated?.ok || !originalCreated?.jiraCreatedAt) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: originalCreated?.reason ?? "Original Miro timestamp unavailable",
+    };
+  }
+
+  const { base, headers } = jiraConfig(env);
+  const response = await fetch(`${base}/issue/${encodeURIComponent(issueKey)}`, {
+    method: "PUT",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fields: {
+        [ORIGINAL_MIRO_CREATED_FIELD_ID]: originalCreated.jiraCreatedAt,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const rawError = await response.text();
+    const detail = jiraErrorMessage(rawError);
+    return {
+      ok: false,
+      stage: "original-miro-created-jira-update",
+      reason: detail
+        ? `Jira rejected Original Miro created update with HTTP ${response.status}: ${detail}`
+        : `Jira rejected Original Miro created update with HTTP ${response.status}`,
+      jiraStatus: response.status,
+      error: rawError,
+    };
+  }
+
+  return {
+    ok: true,
+    fieldId: ORIGINAL_MIRO_CREATED_FIELD_ID,
+    miroCreatedAt: originalCreated.rawCreatedAt,
+    jiraValue: originalCreated.jiraCreatedAt,
+  };
+}
+
 async function createAndApplyReporter(request, env, reporter, miroCreatorId, miroCreatorName) {
+  let requestBody = null;
+  try { requestBody = await request.clone().json(); } catch {}
+
+  const originalMiroCreated = await readOriginalMiroCreated(env, requestBody?.stickyId);
+
   const createResponse = await previewWorker.fetch(request.clone(), env);
   const created = await readJson(createResponse);
   if (!createResponse.ok || !created?.ok || !created?.created || !/^SN-\d+$/i.test(String(created?.issueKey ?? ""))) {
@@ -223,6 +320,12 @@ async function createAndApplyReporter(request, env, reporter, miroCreatorId, mir
     }, 409);
   }
 
+  const originalMiroCreatedSync = await updateOriginalMiroCreated(
+    env,
+    String(created.issueKey),
+    originalMiroCreated,
+  );
+
   await writeCachedReporter(env, miroCreatorId, reporter);
 
   return jsonResponse({
@@ -236,6 +339,7 @@ async function createAndApplyReporter(request, env, reporter, miroCreatorId, mir
       jiraReporterAccountId: reporter.accountId,
       jiraReporterSource: reporter.source,
     },
+    originalMiroCreatedSync,
   });
 }
 
