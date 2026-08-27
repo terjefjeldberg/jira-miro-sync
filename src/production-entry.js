@@ -1,5 +1,5 @@
 import reporterWorker from "./reporter-panel-diagnostic-entry.js";
-import previewWorker from "./preview-entry-v2.js";
+import previewWorker from "./incoming-card-entry.js";
 
 function responseWithText(original, text) {
   const headers = new Headers(original.headers);
@@ -206,7 +206,7 @@ export default {
       return await injectCustomCardDragFallback(response);
     }
 
-    // Everything else uses the fully tested preview implementation now promoted to production.
+    // Everything else uses the fully tested preview implementation plus Incoming auto-create.
     return previewWorker.fetch(request, env, ctx);
   },
 };
