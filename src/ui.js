@@ -18,7 +18,7 @@ const layout=${JSON.stringify(cfg.layout)}, threshold=${cfg.overlapThreshold};
 const timers=new Map(), baselines=new Map(), rollbacks=new Map(), nativeKnown=new Map(), customKnown=new Map();
 const norm=v=>String(v||'').trim().toUpperCase();
 const nativeKey=item=>{const f=(item.fields||[]).find(x=>/^${cfg.jiraProjectKey}-\d+$/i.test(String(x&&x.value||'').trim()));return f?norm(f.value):null};
-const customKey=item=>{const m=String(item&&item.title||'').trim().match(/^CUSTOM_JIRA_CARD:(${cfg.jiraProjectKey}-\d+)$/i);return m?norm(m[1]):null};
+const customKey=item=>{const title=String(item&&((item.data&&item.data.title)||item.title)||'').trim();const m=title.match(/^CUSTOM_JIRA_CARD:(${cfg.jiraProjectKey}-\d+)$/i);return m?norm(m[1]):null};
 const keyOf=item=>item&&item.type==='card'?nativeKey(item):item&&item.type==='image'?customKey(item):null;
 const remember=item=>{if(item&&Number.isFinite(item.x)&&Number.isFinite(item.y))baselines.set(String(item.id),{x:item.x,y:item.y})};
 const column=item=>{if(!Number.isFinite(item.x)||!Number.isFinite(item.y)||item.x<layout.board.left||item.x>layout.board.right||item.y<layout.board.top||item.y>layout.board.bottom)return null;const w=Number(item.width)||1,l=item.x-w/2,r=item.x+w/2;return layout.columns.map(c=>({...c,ratio:Math.max(0,Math.min(r,c.right)-Math.max(l,c.left))/w})).sort((a,b)=>b.ratio-a.ratio)[0]};
