@@ -120,11 +120,11 @@ async function jiraWebhook(request, env) {
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
-  const [native, customRefresh, custom] = await Promise.all([
+  const [native, custom] = await Promise.all([
     nativeId ? moveMappedItemToStatus(env, String(nativeId), status, { native: true }) : Promise.resolve({ ok: true, mapped: false, moved: false }),
-    customId ? refreshCard(env, issueKey) : Promise.resolve(null),
     customId ? moveMappedItemToStatus(env, String(customId), status) : Promise.resolve({ ok: true, mapped: false, moved: false }),
   ]);
+  const customRefresh = customId ? await refreshCard(env, issueKey) : null;
 
   if (native?.missing) await env.CARD_MAP.delete(nativeMapKey(issueKey));
   if (custom?.missing) await env.CARD_MAP.delete(customMapKey(issueKey));
