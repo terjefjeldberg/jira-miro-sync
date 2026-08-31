@@ -1,4 +1,4 @@
-import reporterWorker from "./reporter-panel-diagnostic-entry.js";
+import reporterWorker from "./reporter-incoming-suppress-entry.js";
 import previewWorker from "./incoming-deferred-create-entry.js";
 
 function responseWithText(original, text) {
@@ -131,9 +131,6 @@ async function injectCustomCardDragFallback(baseResponse) {
       return;
     }
 
-    // Delay this fallback slightly so the original listener gets first chance.
-    // The backend route is idempotent, so if the original listener already
-    // changed Jira this becomes a no-op.
     await new Promise(resolve => setTimeout(resolve, 1200));
 
     const boardInfo = await miro.board.getInfo();
@@ -193,7 +190,6 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Sticky conversion and the selected-sticky creator ID panel use the production reporter flow.
     if (
       (request.method === "POST" && url.pathname === "/sticky-to-jira") ||
       (request.method === "GET" && url.pathname === "/miro-panel")
@@ -206,7 +202,6 @@ export default {
       return await injectCustomCardDragFallback(response);
     }
 
-    // Everything else uses the tested preview implementation plus deferred Incoming auto-create.
     return previewWorker.fetch(request, env, ctx);
   },
 };
