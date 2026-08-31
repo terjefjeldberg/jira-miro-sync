@@ -47,14 +47,86 @@ function normalizeGeneratedClientScript(script) {
     .replaceAll('.join("\n")', '.join("\\n")');
 }
 
+function patchConvertedCardLookup(script) {
+  const startNeedle = "  async function waitForCustomCard(issueKey) {";
+  const endNeedle = "\n  async function applyConversionStatus";
+  const start = script.indexOf(startNeedle);
+  if (start < 0) return script;
+  const end = script.indexOf(endNeedle, start);
+  if (end < 0) return script;
+
+  const replacement = `  async function waitForCustomCard(issueKey) {
+    const normalizedIssueKey = String(issueKey || "").trim().toUpperCase();
+    const expectedTitle = "CUSTOM_JIRA_CARD:" + normalizedIssueKey;
+    const started = Date.now();
+
+    while (Date.now() - started < 12000) {
+      let mappedItemId = "";
+
+      try {
+        const response = await backendPost("/conversion-card-id", { issueKey: normalizedIssueKey });
+        const result = await response.json();
+        if (response.ok && result && result.ok && result.itemId) {
+          mappedItemId = String(result.itemId);
+        }
+      } catch (error) {
+        console.warn("Conversion card mapping lookup retry", normalizedIssueKey, error);
+      }
+
+      // Images created by the Jira creation webhook can exist on the board
+      // before getById() can resolve them in this panel's SDK cache. Scan the
+      // board directly and match either the mapped item ID or our card title.
+      try {
+        const images = await miro.board.get({ type: "image" });
+        const match = (images || []).find(function (image) {
+          const imageId = String(image && image.id || "");
+          const title = String(
+            image && (image.title || (image.data && image.data.title)) || ""
+          ).trim().toUpperCase();
+
+          return (
+            (mappedItemId && imageId === mappedItemId) ||
+            title === expectedTitle
+          );
+        });
+
+        if (match) return match;
+      } catch (error) {
+        console.warn("Conversion card board scan retry", normalizedIssueKey, error);
+      }
+
+      if (mappedItemId) {
+        try {
+          const item = await miro.board.getById(mappedItemId);
+          if (item && item.type === "image") return item;
+        } catch (error) {
+          console.warn("Conversion card direct lookup retry", normalizedIssueKey, error);
+        }
+      }
+
+      await new Promise(function (resolve) { setTimeout(resolve, 200); });
+    }
+
+    throw new Error(normalizedIssueKey + " was created in Jira, but its Miro card could not be resolved for repositioning.");
+  }
+`;
+
+  return script.slice(0, start) + replacement + script.slice(end);
+}
+
+function buildClientScript(html) {
+  const extracted = extractClientScript(html);
+  if (!extracted) return null;
+  return patchConvertedCardLookup(normalizeGeneratedClientScript(extracted));
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/miro-panel-client.js") {
       const { html } = await readPanelHtml();
-      const extracted = extractClientScript(html);
-      const script = extracted ? normalizeGeneratedClientScript(extracted) : null;
+      const script = buildClientScript(html);
       if (!script) {
         return new Response("console.error('Could not load Miro panel client');", {
           status: 500,
@@ -76,7 +148,7 @@ export default {
       if (!script) return response;
 
       const inlineBlock = `<script>\n${script}\n</script>`;
-      const externalBlock = '<script src="/miro-panel-client.js?v=20260831-2"></script>';
+      const externalBlock = '<script src="/miro-panel-client.js?v=20260831-3"></script>';
       const patched = html.replace(inlineBlock, externalBlock);
       return responseWithText(response, patched, "text/html; charset=utf-8");
     }
