@@ -19,7 +19,8 @@ async function register(request, env, kind) {
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const boardId = String(parsed.body.boardId ?? '').trim();
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
-  const entries = Array.isArray(parsed.body.cards) ? parsed.body.cards : [];
+  const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
+    .filter(entry => issueKeyIsValid(normalizeIssueKey(entry?.issueKey), env));
   const mappings = await registerMappings(env, entries, kind);
   return json({ ok: true, registered: mappings.length, mappings });
 }
@@ -112,10 +113,6 @@ async function jiraWebhook(request, env) {
       env.CARD_MAP.get(directPendingKey(issueKey)),
     ]);
 
-    // Preserve the old production safety net as well as the new KV marker.
-    // Sticky-originated Jira issues carry Original Miro created; normal Jira
-    // issues do not. Re-read after the grace period so a fast creation webhook
-    // cannot race the marker and incorrectly create an Incoming card.
     if (!nativeId && !customId && !directPending) {
       live = await getCardData(env, issueKey).catch(() => null);
       if (live?.ok && live.originalMiroCreated) {
@@ -166,7 +163,9 @@ export default {
     if (method === 'POST' && path === '/jira-card-data') {
       const auth = await requireMiroJson(request, env); if (auth) return auth;
       const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
-      const issueKey = normalizeIssueKey(parsed.body.issueKey), data = await getCardData(env, issueKey);
+      const issueKey = normalizeIssueKey(parsed.body.issueKey);
+      if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
+      const data = await getCardData(env, issueKey);
       return json(data.ok ? { ...data, browseUrl: `${config(env).jiraSiteUrl}/browse/${encodeURIComponent(issueKey)}` } : data, data.ok ? 200 : 502);
     }
     if (method === 'POST' && path === '/custom-card-pending') {
