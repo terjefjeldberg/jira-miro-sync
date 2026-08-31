@@ -1,5 +1,5 @@
-import reporterWorker from "./reporter-incoming-suppress-entry.js";
-import previewWorker from "./incoming-deferred-create-entry.js";
+import reporterWorker from "./reporter-panel-incoming-only-entry.js";
+import previewWorker from "./incoming-multipart-fix-entry.js";
 
 function responseWithText(original, text) {
   const headers = new Headers(original.headers);
