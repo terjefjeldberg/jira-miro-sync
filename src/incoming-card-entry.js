@@ -6,7 +6,7 @@ const CARD_HEIGHT = 120;
 const FRAME_MARGIN_X = 36;
 const FRAME_MARGIN_Y = 36;
 const CARD_GAP_X = 20;
-const CARD_GAP_Y = 20;
+const CARD_GAP_Y = 30;
 const LAYER_OFFSET_X = 24;
 const LAYER_OFFSET_Y = 24;
 const MAX_LAYERS = 12;
@@ -292,20 +292,17 @@ function chooseIncomingPosition(frameWidth, frameHeight, customImages) {
     Math.abs(position.x - x) <= 8 && Math.abs(position.y - y) <= 8,
   );
 
+  // Fill the complete base grid first: top-to-bottom, then left-to-right.
+  // Once full, every new layer repeats the same slot order and shifts ALL
+  // cards in the same direction (+X/+Y). Using a per-slot direction caused
+  // bottom-row cards to shift upward while top-row cards shifted downward.
   for (let layer = 0; layer < MAX_LAYERS; layer += 1) {
     for (let column = 0; column < columns; column += 1) {
       for (let row = 0; row < rows; row += 1) {
         const baseX = FRAME_MARGIN_X + CARD_WIDTH / 2 + column * (CARD_WIDTH + CARD_GAP_X);
         const baseY = FRAME_MARGIN_Y + CARD_HEIGHT / 2 + row * (CARD_HEIGHT + CARD_GAP_Y);
-
-        const freeRight = frameWidth - FRAME_MARGIN_X - (baseX + CARD_WIDTH / 2);
-        const freeLeft = baseX - CARD_WIDTH / 2 - FRAME_MARGIN_X;
-        const freeDown = frameHeight - FRAME_MARGIN_Y - (baseY + CARD_HEIGHT / 2);
-        const freeUp = baseY - CARD_HEIGHT / 2 - FRAME_MARGIN_Y;
-        const xSign = freeRight >= freeLeft ? 1 : -1;
-        const ySign = freeDown >= freeUp ? 1 : -1;
-        const x = baseX + xSign * layer * LAYER_OFFSET_X;
-        const y = baseY + ySign * layer * LAYER_OFFSET_Y;
+        const x = baseX + layer * LAYER_OFFSET_X;
+        const y = baseY + layer * LAYER_OFFSET_Y;
 
         const inside =
           x - CARD_WIDTH / 2 >= 0 &&
@@ -359,8 +356,6 @@ async function createIncomingCard(env, issueKey) {
     return { ok: false, created: false, stage: "incoming-no-space", reason: "No safe Incoming slot was available" };
   }
 
-  // Re-check the mapping after the network reads to reduce duplicate creation
-  // if two Jira webhook deliveries for the same issue arrive close together.
   const mappingAfterReads = await env.CARD_MAP.get(customCardMapKey(issueKey));
   if (mappingAfterReads) {
     return { ok: true, created: false, mapped: true, itemId: mappingAfterReads };
