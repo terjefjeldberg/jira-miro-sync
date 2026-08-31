@@ -1,5 +1,5 @@
 name = "jira-to-miro"
-main = "src/production-conversion-entry.js"
+main = "src/index.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
 
