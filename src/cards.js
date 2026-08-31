@@ -1,6 +1,6 @@
 import { config, customMapKey, normalizeIssueKey, WORK_TYPE_COLORS } from './config.js';
 import { getCardData } from './jira.js';
-import { deleteImage, incomingPosition, listItems, issueKeyFromImage, miroHeaders, replaceSvg, uploadSvg } from './miro.js';
+import { deleteImage, getItem, incomingPosition, listItems, issueKeyFromImage, patchItem, replaceSvg, uploadSvg } from './miro.js';
 
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -86,7 +86,25 @@ export async function createCard(env, issueKey, position, parentId = null) {
 
 export async function createDirectCard(env, issueKey, x, y) {
   if (![x, y].every(Number.isFinite)) return { ok: false, status: 400, reason: 'Invalid card position' };
-  return createCard(env, issueKey, { x, y });
+  issueKey = normalizeIssueKey(issueKey);
+  const result = await createCard(env, issueKey, { x, y });
+  if (!result.ok || result.created) return result;
+
+  // If the Jira creation webhook won a race and already created this issue in
+  // Incoming, reuse that single mapped image instead of creating a duplicate.
+  // Detaching/repositioning also makes conversion retries idempotent.
+  const read = await getItem(env, result.itemId);
+  if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
+  if (!read.found) {
+    await env.CARD_MAP.delete(customMapKey(issueKey));
+    return createCard(env, issueKey, { x, y });
+  }
+  const moved = await patchItem(env, result.itemId, {
+    parent: { id: null },
+    position: { x, y, origin: 'center' },
+  });
+  if (!moved.ok) return { ok: false, status: 502, stage: 'direct-reposition-existing-card', miroStatus: moved.status, error: await moved.text() };
+  return { ...result, directPositionEnsured: true };
 }
 
 async function dedupeIncoming(env, issueKey, createdItemId) {
