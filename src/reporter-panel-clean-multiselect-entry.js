@@ -14,12 +14,10 @@ async function patchPanel(baseResponse) {
   if (!baseResponse.ok) return baseResponse;
 
   let html = await baseResponse.clone().text();
-  if (html.includes("CLEAN MULTI STICKY CONVERSION PANEL")) {
+  if (html.includes("CLEAN MULTI STICKY POSITION-PRESERVING CONVERSION")) {
     return baseResponse;
   }
 
-  // Remove the old helper text under the button. It is implementation detail
-  // and is not useful to normal users.
   html = html.replace(
     /<div class="small">\s*Work type is determined from the sticky colour\.\s*Tags and assignee are ignored for now\.\s*<\/div>/m,
     "",
@@ -28,8 +26,24 @@ async function patchPanel(baseResponse) {
   const script = `
 <script>
 (function () {
-  // CLEAN MULTI STICKY CONVERSION PANEL
+  // CLEAN MULTI STICKY POSITION-PRESERVING CONVERSION
   const CONVERSION_METADATA_KEY = "rendraStickyJiraConversionV1";
+
+  const ACTIVE_BOARD = {
+    left: 438.36642375544034,
+    right: 5303.436262036128,
+    top: 434.257014599023,
+    bottom: 3045.734778444852
+  };
+
+  const STATUS_COLUMNS = [
+    { status: "Todo", left: 1468.7903676550886, right: 2551.696467655089 },
+    { status: "In progress", left: 2564.6113791667394, right: 3277.6028791667395 },
+    { status: "Functional review", left: 3289.4484150169965, right: 3651.451815016996 },
+    { status: "Code review", left: 3662.9922412433402, right: 4020.66884124334 },
+    { status: "Approved", left: 4033.200178788891, right: 4680.471778788891 },
+    { status: "Merged", left: 4692.4616140640555, right: 5284.738514064056 }
+  ];
 
   const COLOR_TO_WORK_TYPE = {
     light_pink: "Bug",
@@ -86,24 +100,150 @@ async function patchPanel(baseResponse) {
     });
   }
 
+  async function getCanvasPosition(item) {
+    const x = Number(item?.x);
+    const y = Number(item?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error("A selected note has an invalid board position.");
+    }
+
+    if (!item.parentId || item.relativeTo === "canvas_center") {
+      return { x, y };
+    }
+
+    const parent = await miro.board.getById(item.parentId);
+    if (!parent) {
+      throw new Error("Could not resolve a selected note's parent frame.");
+    }
+
+    const parentPosition = await getCanvasPosition(parent);
+
+    if (item.relativeTo === "parent_top_left") {
+      const parentWidth = Number(parent.width);
+      const parentHeight = Number(parent.height);
+      if (!Number.isFinite(parentWidth) || !Number.isFinite(parentHeight)) {
+        throw new Error("Could not resolve a selected note's frame dimensions.");
+      }
+      return {
+        x: parentPosition.x - parentWidth / 2 + x,
+        y: parentPosition.y - parentHeight / 2 + y
+      };
+    }
+
+    if (item.relativeTo === "parent_center") {
+      return {
+        x: parentPosition.x + x,
+        y: parentPosition.y + y
+      };
+    }
+
+    return { x, y };
+  }
+
+  function statusFromPosition(sticky, canvasPosition) {
+    if (
+      canvasPosition.x < ACTIVE_BOARD.left ||
+      canvasPosition.x > ACTIVE_BOARD.right ||
+      canvasPosition.y < ACTIVE_BOARD.top ||
+      canvasPosition.y > ACTIVE_BOARD.bottom
+    ) {
+      return null;
+    }
+
+    const width = Number(sticky?.width);
+    const effectiveWidth = Number.isFinite(width) && width > 0 ? width : 1;
+    const itemLeft = canvasPosition.x - effectiveWidth / 2;
+    const itemRight = canvasPosition.x + effectiveWidth / 2;
+
+    const ranked = STATUS_COLUMNS
+      .map(column => {
+        const overlap = Math.max(0, Math.min(itemRight, column.right) - Math.max(itemLeft, column.left));
+        return { ...column, ratio: overlap / effectiveWidth };
+      })
+      .sort((a, b) => b.ratio - a.ratio);
+
+    return ranked[0] && ranked[0].ratio >= 0.60 ? ranked[0].status : null;
+  }
+
+  async function waitForCustomCard(issueKey) {
+    const started = Date.now();
+    const timeoutMs = 8000;
+
+    while (Date.now() - started < timeoutMs) {
+      try {
+        const response = await backendPost("/conversion-card-id", { issueKey });
+        const result = await response.json();
+        if (response.ok && result?.ok && result?.itemId) {
+          const item = await miro.board.getById(String(result.itemId));
+          if (item && item.type === "image") return item;
+        }
+      } catch (error) {
+        console.warn("CONVERSION card lookup retry", issueKey, error);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    throw new Error(issueKey + " was created in Jira, but its Miro card did not appear in time. Try converting the note again; the existing Jira issue will be reused.");
+  }
+
+  async function applyConversionStatus(issueKey, desiredStatus) {
+    if (!desiredStatus) return;
+
+    const response = await backendPost("/conversion-set-status", {
+      issueKey,
+      desiredStatus
+    });
+
+    let result = null;
+    try {
+      result = await response.json();
+    } catch {}
+
+    if (!response.ok || !result?.ok) {
+      const reason = result?.reason || result?.error || "Could not set Jira status.";
+      throw new Error(typeof reason === "string" ? reason : JSON.stringify(reason));
+    }
+  }
+
+  async function moveCardToExactCanvasPosition(card, canvasPosition) {
+    let current = card;
+
+    if (current.parentId) {
+      const parent = await miro.board.getById(current.parentId);
+      if (!parent || typeof parent.remove !== "function") {
+        throw new Error("Could not release the converted card from Incoming.");
+      }
+
+      await parent.remove(current);
+      current = await miro.board.getById(String(current.id));
+      if (!current) {
+        throw new Error("Could not reload the converted Miro card.");
+      }
+    }
+
+    current.x = canvasPosition.x;
+    current.y = canvasPosition.y;
+    await current.sync();
+    return current;
+  }
+
   const heading = document.querySelector("h2");
   if (heading) heading.textContent = "Convert Miro notes to Jira";
 
   const intro = document.querySelector("body > p");
   if (intro) {
-    intro.textContent = "Select one or more sticky notes on the board, then convert them to Jira. Each note becomes a Jira issue and will appear in Incoming.";
+    intro.textContent = "Select one or more sticky notes and convert them to Jira. The converted cards stay exactly where the notes are. Notes inside a workflow column get that Jira status; notes outside the workflow board keep Jira's default status.";
   }
 
   const oldButton = document.getElementById("convertButton");
   const status = document.getElementById("status");
   if (!oldButton || !status) return;
 
-  // Replace the button node to remove the old single-select click listener.
   const convertButton = oldButton.cloneNode(true);
-  convertButton.textContent = "Convert selected notes to Jira";
+  convertButton.textContent = "Convert selected notes";
   oldButton.replaceWith(convertButton);
 
-  // Put diagnostic controls behind a collapsed Admin tools section.
   const creatorButton = document.getElementById("creatorIdButton");
   const creatorResult = document.getElementById("creatorDiagnosticResult");
   const frameButton = document.getElementById("frameIdButton");
@@ -113,12 +253,12 @@ async function patchPanel(baseResponse) {
     const details = document.createElement("details");
     details.style.marginTop = "14px";
 
-    const summary = document.createElement("summary");
-    summary.textContent = "Admin tools";
-    summary.style.cursor = "pointer";
-    summary.style.fontSize = "12px";
-    summary.style.color = "#666";
-    details.appendChild(summary);
+    const adminSummary = document.createElement("summary");
+    adminSummary.textContent = "Admin tools";
+    adminSummary.style.cursor = "pointer";
+    adminSummary.style.fontSize = "12px";
+    adminSummary.style.color = "#666";
+    details.appendChild(adminSummary);
 
     const tools = document.createElement("div");
     tools.style.marginTop = "10px";
@@ -143,6 +283,11 @@ async function patchPanel(baseResponse) {
       throw new Error("This sticky note has no text.");
     }
 
+    const originalPosition = await getCanvasPosition(sticky);
+    const desiredStatus = statusFromPosition(sticky, originalPosition);
+    const workType = workTypeFromSticky(sticky);
+    const stickyColor = String(sticky?.style?.fillColor || "");
+
     let conversionState;
     try {
       conversionState = await sticky.getMetadata(CONVERSION_METADATA_KEY);
@@ -150,42 +295,73 @@ async function patchPanel(baseResponse) {
       conversionState = undefined;
     }
 
-    if (conversionState?.issueKey) {
-      if (conversionState.stage === "card-created") {
-        await miro.board.remove(sticky);
-        return { issueKey: String(conversionState.issueKey), alreadyConverted: true };
+    if (conversionState?.stage === "card-created" && conversionState?.issueKey) {
+      await miro.board.remove(sticky);
+      return {
+        issueKey: String(conversionState.issueKey),
+        desiredStatus,
+        alreadyConverted: true
+      };
+    }
+
+    let issueKey = conversionState?.issueKey
+      ? String(conversionState.issueKey)
+      : "";
+
+    if (!issueKey) {
+      const response = await backendPost("/sticky-to-jira", {
+        summary,
+        workType,
+        stickyId: String(sticky.id),
+        createdBy: creatorId(sticky.createdBy)
+      });
+
+      let result = null;
+      try {
+        result = await response.json();
+      } catch {}
+
+      if (!response.ok || !result?.ok || !result?.issueKey) {
+        const reason = result?.reason || result?.error || "Could not create Jira issue.";
+        throw new Error(typeof reason === "string" ? reason : JSON.stringify(reason));
       }
-      return { issueKey: String(conversionState.issueKey), alreadyCreated: true };
+
+      issueKey = String(result.issueKey);
+
+      await sticky.setMetadata(CONVERSION_METADATA_KEY, {
+        issueKey,
+        stage: "jira-created",
+        workType,
+        stickyColor,
+        desiredStatus: desiredStatus || null
+      });
     }
 
-    const workType = workTypeFromSticky(sticky);
-    const response = await backendPost("/sticky-to-jira", {
-      summary,
-      workType,
-      stickyId: String(sticky.id),
-      createdBy: creatorId(sticky.createdBy)
-    });
+    const customCard = await waitForCustomCard(issueKey);
 
-    let result = null;
-    try {
-      result = await response.json();
-    } catch {}
+    // Set Jira status before placing the final card. The backend suppresses the
+    // corresponding Jira -> Miro movement so the conversion itself never
+    // changes the note/card's original board position.
+    await applyConversionStatus(issueKey, desiredStatus);
 
-    if (!response.ok || !result?.ok || !result?.issueKey) {
-      const reason = result?.reason || result?.error || "Could not create Jira issue.";
-      throw new Error(typeof reason === "string" ? reason : JSON.stringify(reason));
-    }
+    const movedCard = await moveCardToExactCanvasPosition(customCard, originalPosition);
 
-    const issueKey = String(result.issueKey);
     await sticky.setMetadata(CONVERSION_METADATA_KEY, {
       issueKey,
       stage: "card-created",
+      customCardFrameId: String(movedCard.id),
       workType,
-      stickyColor: String(sticky?.style?.fillColor || "")
+      stickyColor,
+      desiredStatus: desiredStatus || null
     });
 
     await miro.board.remove(sticky);
-    return { issueKey, created: true };
+
+    return {
+      issueKey,
+      desiredStatus,
+      created: true
+    };
   }
 
   convertButton.addEventListener("click", async function () {
@@ -193,11 +369,12 @@ async function patchPanel(baseResponse) {
 
     try {
       const selection = await miro.board.getSelection();
-      const stickies = (Array.isArray(selection) ? selection : []).filter(item => item?.type === "sticky_note");
-      const unsupportedCount = (Array.isArray(selection) ? selection.length : 0) - stickies.length;
+      const selected = Array.isArray(selection) ? selection : [];
+      const stickies = selected.filter(item => item?.type === "sticky_note");
+      const unsupportedCount = selected.length - stickies.length;
 
       if (stickies.length === 0) {
-        throw new Error("Select at least one sticky note on the board first.");
+        throw new Error("Select at least one sticky note first.");
       }
 
       if (unsupportedCount > 0) {
@@ -206,16 +383,14 @@ async function patchPanel(baseResponse) {
 
       setStatus(
         stickies.length === 1
-          ? "Converting 1 note to Jira…"
-          : "Converting " + stickies.length + " notes to Jira…",
+          ? "Converting 1 note…"
+          : "Converting " + stickies.length + " notes…",
         "info"
       );
 
       const successes = [];
       const failures = [];
 
-      // Sequential conversion avoids hammering Jira/Miro and keeps reporter,
-      // metadata and Jira creation automation ordering deterministic.
       for (let index = 0; index < stickies.length; index += 1) {
         const sticky = stickies[index];
         setStatus(
@@ -225,7 +400,7 @@ async function patchPanel(baseResponse) {
 
         try {
           const result = await convertSticky(sticky);
-          successes.push(result.issueKey);
+          successes.push(result);
         } catch (error) {
           failures.push({
             text: plainText(sticky.content).slice(0, 60) || "Untitled note",
@@ -235,12 +410,19 @@ async function patchPanel(baseResponse) {
       }
 
       if (failures.length === 0) {
-        setStatus(
-          successes.length === 1
-            ? successes[0] + " created successfully. Card will appear in Incoming."
-            : successes.length + " Jira issues created successfully. Cards will appear in Incoming.",
-          "success"
-        );
+        if (successes.length === 1) {
+          const result = successes[0];
+          setStatus(
+            result.issueKey + " converted successfully" +
+              (result.desiredStatus ? " with status " + result.desiredStatus + "." : " with the default Jira status."),
+            "success"
+          );
+        } else {
+          setStatus(
+            successes.length + " notes converted successfully. Their positions were preserved.",
+            "success"
+          );
+        }
       } else if (successes.length > 0) {
         setStatus(
           successes.length + " converted successfully. " + failures.length + " failed and were left on the board.\n\n" +
