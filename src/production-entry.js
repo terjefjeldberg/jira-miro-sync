@@ -1,4 +1,4 @@
-import reporterWorker from "./reporter-panel-incoming-only-entry.js";
+import reporterWorker from "./reporter-panel-clean-multiselect-entry.js";
 import previewWorker from "./incoming-multipart-fix-entry.js";
 
 function responseWithText(original, text) {
