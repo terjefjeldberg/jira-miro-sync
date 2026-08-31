@@ -67,7 +67,7 @@ async function setConversionStatus(request, env) {
   const issueKey = normalizeIssueKey(parsed.body.issueKey), desiredStatus = String(parsed.body.desiredStatus ?? '').trim();
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
   await env.CARD_MAP.put(freezeKey(issueKey), JSON.stringify({ desiredStatus }), { expirationTtl: 30 });
-  const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
+  const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: false, firstMatchingTransition: true });
   if (!result.ok || !result.changed) await env.CARD_MAP.delete(freezeKey(issueKey));
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
 }
@@ -105,8 +105,6 @@ async function jiraWebhook(request, env) {
   ]);
 
   if (!nativeId && !customId && !directPending) {
-    // Jira Automation can reach us a fraction before /sticky-to-jira stores its
-    // direct-conversion marker. One short grace read prevents a race into Incoming.
     await new Promise(resolve => setTimeout(resolve, 750));
     [nativeId, customId, directPending] = await Promise.all([
       env.CARD_MAP.get(nativeMapKey(issueKey)),
