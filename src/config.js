@@ -89,3 +89,4 @@ export const customMapKey = key => `custom-card:${normalizeIssueKey(key)}`;
 export const reporterMapKey = id => `reporter-account:${String(id ?? '').trim()}`;
 export const freezeKey = key => `conversion-freeze:${normalizeIssueKey(key)}`;
 export const directPendingKey = key => `conversion-direct-pending:${normalizeIssueKey(key)}`;
+export const stickyIssueKey = stickyId => `conversion-sticky:${String(stickyId ?? '').trim()}`;
