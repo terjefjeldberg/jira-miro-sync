@@ -50,6 +50,8 @@ const asNumber = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 };
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const escapeRegex = value => String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export function config(env) {
   let layout = DEFAULT_LAYOUT;
@@ -60,11 +62,11 @@ export function config(env) {
     } catch {}
   }
   return {
-    jiraProjectKey: env.JIRA_PROJECT_KEY || 'SN',
-    jiraSiteUrl: env.JIRA_SITE_URL || 'https://rendradev.atlassian.net',
-    incomingFrameId: env.MIRO_INCOMING_FRAME_ID || '3458764681916843188',
+    jiraProjectKey: String(env.JIRA_PROJECT_KEY || 'SN').trim().toUpperCase(),
+    jiraSiteUrl: String(env.JIRA_SITE_URL || 'https://rendradev.atlassian.net').replace(/\/+$/, ''),
+    incomingFrameId: String(env.MIRO_INCOMING_FRAME_ID || '3458764681916843188').trim(),
     layout,
-    overlapThreshold: asNumber(env.STATUS_OVERLAP_THRESHOLD, 0.6),
+    overlapThreshold: clamp(asNumber(env.STATUS_OVERLAP_THRESHOLD, 0.6), 0, 1),
     fields: {
       testArea: env.JIRA_FIELD_TEST_AREA || 'customfield_10832',
       originalMiroCreated: env.JIRA_FIELD_ORIGINAL_MIRO_CREATED || 'customfield_11207',
@@ -83,7 +85,7 @@ export function config(env) {
 
 export const normalizeIssueKey = value => String(value ?? '').trim().toUpperCase();
 export const normalizeStatus = value => String(value ?? '').trim().toLowerCase();
-export const issueKeyIsValid = (value, env) => new RegExp(`^${config(env).jiraProjectKey}-\\d+$`, 'i').test(String(value ?? '').trim());
+export const issueKeyIsValid = (value, env) => new RegExp(`^${escapeRegex(config(env).jiraProjectKey)}-\\d+$`, 'i').test(String(value ?? '').trim());
 export const nativeMapKey = key => `jira-card:${normalizeIssueKey(key)}`;
 export const customMapKey = key => `custom-card:${normalizeIssueKey(key)}`;
 export const reporterMapKey = id => `reporter-account:${String(id ?? '').trim()}`;
