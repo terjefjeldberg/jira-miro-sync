@@ -40,7 +40,7 @@ export async function getCardData(env, issueKey) {
   };
 }
 
-export async function transitionIssue(env, issueKey, desiredStatus, { enforceTestArea = true } = {}) {
+export async function transitionIssue(env, issueKey, desiredStatus, { enforceTestArea = true, firstMatchingTransition = false } = {}) {
   const cfg = config(env);
   const normalized = normalizeStatus(desiredStatus);
   const allowed = new Set(cfg.layout.columns.map(column => normalizeStatus(column.status)));
@@ -59,7 +59,9 @@ export async function transitionIssue(env, issueKey, desiredStatus, { enforceTes
   const transitions = (await transitionsResponse.json())?.transitions || [];
   const destinations = transitions.filter(t => normalizeStatus(t?.to?.name) === normalized);
   const preferred = destinations.filter(t => String(t?.name ?? '').trim().toLowerCase().startsWith('move to '));
-  const selected = preferred.length === 1 ? preferred[0] : preferred.length === 0 && destinations.length === 1 ? destinations[0] : null;
+  const selected = firstMatchingTransition
+    ? destinations[0] || null
+    : preferred.length === 1 ? preferred[0] : preferred.length === 0 && destinations.length === 1 ? destinations[0] : null;
   if (!selected?.id) return { ok: false, status: 409, changed: false, reason: 'No unique approved Jira transition found', issueKey, currentStatus, desiredStatus };
 
   const response = await request(env, `/issue/${encodeURIComponent(issueKey)}/transitions`, {
@@ -209,9 +211,6 @@ async function jiraUserByName(env, displayName) {
     if (matches.length === 1) return { accountId: String(matches[0].accountId), displayName: String(matches[0].displayName ?? displayName), source: path.startsWith('/user/picker') ? 'user-picker' : 'assignable-search' };
   }
 
-  // Some Jira tenants reject the user lookup endpoints. Preserve the existing
-  // fallback: infer the unique account ID from recent issues where the person
-  // appears as reporter or assignee.
   const escaped = String(displayName).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const jql = `(reporter = \"${escaped}\" OR assignee = \"${escaped}\") ORDER BY updated DESC`;
   const response = await fetch(`${base}/search/jql?jql=${encodeURIComponent(jql)}&fields=reporter,assignee&maxResults=100`, { headers });
