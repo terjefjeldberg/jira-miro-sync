@@ -90,9 +90,6 @@ export async function createDirectCard(env, issueKey, x, y) {
   const result = await createCard(env, issueKey, { x, y });
   if (!result.ok || result.created) return result;
 
-  // If the Jira creation webhook won a race and already created this issue in
-  // Incoming, reuse that single mapped image instead of creating a duplicate.
-  // Detaching/repositioning also makes conversion retries idempotent.
   const read = await getItem(env, result.itemId);
   if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
   if (!read.found) {
@@ -136,6 +133,15 @@ export async function refreshCard(env, issueKey) {
   issueKey = normalizeIssueKey(issueKey);
   const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (!itemId) return { ok: true, refreshed: false, mapped: false };
+
+  // Only the compact refactor's custom cards are SVG images. Older frame,
+  // app-card and group representations remain movable, but must not be sent to
+  // Miro's /images PATCH endpoint when Jira fields change.
+  const read = await getItem(env, itemId);
+  if (!read.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-miro', miroStatus: read.status, error: read.error };
+  if (!read.found) return { ok: true, refreshed: false, mapped: true, legacyOrMissing: true };
+  if (String(read.item?.type ?? '') !== 'image') return { ok: true, refreshed: false, mapped: true, legacy: true, itemType: read.item?.type ?? null };
+
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
   const result = await replaceSvg(env, itemId, issueKey, cardSvg(data));
