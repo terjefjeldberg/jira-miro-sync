@@ -1,6 +1,6 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nativeMapKey, normalizeIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
+import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
 import { moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderPanel, renderPanelClient } from './ui.js';
@@ -42,9 +42,11 @@ async function stickyToJira(request, env) {
   const body = parsed.body;
   const reporter = await resolveReporter(env, body.stickyId, body.createdBy);
   if (!reporter.ok) return json(reporter, reporter.status || 409);
-  const created = await createIssueFromSticky(env, body.summary, String(body.workType ?? '').trim(), { reporterAccountId: reporter.accountId });
+  const created = await createIssueFromSticky(env, body.summary, String(body.workType ?? '').trim());
   if (!created.ok) return json(created, created.status || 500);
   await env.CARD_MAP.put(directPendingKey(created.issueKey), JSON.stringify({ stickyId: String(body.stickyId ?? '') }), { expirationTtl: 90 });
+  const reporterUpdate = await applyReporter(env, created.issueKey, reporter);
+  if (!reporterUpdate.ok) return json({ ...created, ok: false, reason: reporterUpdate.reason, reporterSync: reporterUpdate }, reporterUpdate.status || 409);
   const originalMiroCreatedSync = await applyStickyMetadata(env, created.issueKey, reporter);
   return json({ ...created, reporterSync: { ok: true, applied: true, miroCreatorId: reporter.creatorId, miroCreatorName: reporter.creatorName, jiraReporterAccountId: reporter.accountId, jiraReporterSource: reporter.source }, originalMiroCreatedSync });
 }
@@ -96,11 +98,22 @@ async function jiraWebhook(request, env) {
     return json({ ok: true, moved: false, issueKey, status, conversionPositionPreserved: true });
   }
 
-  const [nativeId, customId, directPending] = await Promise.all([
+  let [nativeId, customId, directPending] = await Promise.all([
     env.CARD_MAP.get(nativeMapKey(issueKey)),
     env.CARD_MAP.get(customMapKey(issueKey)),
     env.CARD_MAP.get(directPendingKey(issueKey)),
   ]);
+
+  if (!nativeId && !customId && !directPending) {
+    // Jira Automation can reach us a fraction before /sticky-to-jira stores its
+    // direct-conversion marker. One short grace read prevents a race into Incoming.
+    await new Promise(resolve => setTimeout(resolve, 750));
+    [nativeId, customId, directPending] = await Promise.all([
+      env.CARD_MAP.get(nativeMapKey(issueKey)),
+      env.CARD_MAP.get(customMapKey(issueKey)),
+      env.CARD_MAP.get(directPendingKey(issueKey)),
+    ]);
+  }
 
   if (!customId && directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true });
 
