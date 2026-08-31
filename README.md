@@ -49,7 +49,7 @@ The conversion panel supports one or many sticky notes:
 5. apply the workflow status when the sticky is inside a workflow column;
 6. remove the sticky only after successful card creation.
 
-Sticky conversion never uses Incoming. A short-lived KV flag suppresses the Jira-created webhook until the direct card exists.
+Sticky conversion never uses Incoming. A short-lived KV flag suppresses the Jira-created webhook until the direct card exists. The sticky ID is also cached to the Jira issue for 24 hours, so retrying after a partial failure reuses the same Jira issue instead of creating a duplicate.
 
 ## KV keys
 
@@ -58,6 +58,7 @@ Sticky conversion never uses Incoming. A short-lived KV flag suppresses the Jira
 - `reporter-account:<miro-user-id>` — cached Jira Reporter account ID.
 - `conversion-freeze:<issue>` — prevents a conversion status transition from moving the new card.
 - `conversion-direct-pending:<issue>` — prevents sticky conversion from creating an Incoming card.
+- `conversion-sticky:<miro-sticky-id>` — short-lived sticky → Jira issue idempotency mapping.
 
 ## Environment / production migration
 
@@ -106,6 +107,25 @@ Useful checks after a change:
 6. Sticky conversion preserves exact position, Reporter, original timestamp and required defaults.
 7. Multi-select conversion continues after an individual failure.
 8. Jira field changes refresh the custom-card SVG.
+
+## Live verification order before merge
+
+Run these against a separately deployed refactor Worker before changing `main`:
+
+1. Open the Miro app and confirm `/health`, panel opening and existing-card discovery.
+2. Create one Jira issue and verify one — and only one — Incoming card.
+3. Change that Jira issue through every approved status and verify X movement with Y preserved.
+4. Drag a custom card through every column and verify Jira follows the 60% rule.
+5. Attempt Functional review with empty Test area and verify rollback; fill Test area and retry.
+6. Change summary, priority and assignee in Jira and verify the existing Miro card refreshes without duplication.
+7. Convert one sticky outside the workflow board and verify exact position + default Jira status.
+8. Convert one sticky in each workflow column and verify exact position + inherited Jira status.
+9. Convert multiple stickies in one selection and verify per-item failure isolation.
+10. Force/retry a conversion after Jira issue creation and verify the same issue/card is reused.
+11. Create an issue directly in Jira while sticky conversion is happening and verify the Jira-created issue still goes to Incoming while the sticky-originated issue does not.
+12. Verify Reporter, Original Miro created and required work-type defaults for Bug, Improvement, New Feature and Task/config/doc/test.
+
+Only after this list passes should the refactor replace `main`.
 
 ## Safe rollback
 
