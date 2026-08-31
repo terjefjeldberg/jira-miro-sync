@@ -86,7 +86,7 @@ function textValue(field, text) {
   return schema === 'doc' || custom.includes(':textarea') ? adf(text) : text;
 }
 
-export async function createIssueFromSticky(env, summary, workType, options = {}) {
+export async function createIssueFromSticky(env, summary, workType) {
   const cfg = config(env);
   summary = String(summary ?? '').replace(/\s+/g, ' ').trim();
   const allowed = new Set(['Bug', 'Improvement', 'Spike', 'New Feature', 'Hotfix candidate', 'Task/config/doc/test']);
@@ -104,7 +104,6 @@ export async function createIssueFromSticky(env, summary, workType, options = {}
   if (!metaResponse.ok) return { ok: false, status: 502, stage: 'read-create-field-metadata', jiraStatus: metaResponse.status, error: await metaResponse.text() };
   const fields = (await metaResponse.json())?.fields || [];
   const createFields = { project: { key: cfg.jiraProjectKey }, summary, issuetype: { id: String(type.id) } };
-  if (options.reporterAccountId) createFields.reporter = { accountId: String(options.reporterAccountId) };
   const applied = {};
 
   if (workType === 'Bug') {
@@ -251,6 +250,17 @@ export async function resolveReporter(env, stickyId, claimedCreatorId) {
   if (!jiraUser) return { ok: false, status: 409, stage: 'reporter-jira-account-id-unresolved', reason: `Could not resolve Jira accountId for ${creator.name}`, miroCreatorId: creator.id, miroCreatorName: creator.name };
   if (env.CARD_MAP) await env.CARD_MAP.put(reporterMapKey(creator.id), JSON.stringify(jiraUser));
   return { ok: true, creatorId: creator.id, creatorName: creator.name, accountId: jiraUser.accountId, source: jiraUser.source || 'jira-user-search', createdAt: sticky.createdAt };
+}
+
+export async function applyReporter(env, issueKey, reporter) {
+  if (!reporter?.accountId) return { ok: false, stage: 'reporter-jira-account-id', reason: 'Reporter account ID is missing' };
+  const response = await request(env, `/issue/${encodeURIComponent(issueKey)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { reporter: { accountId: String(reporter.accountId) } } }),
+  });
+  if (!response.ok) return { ok: false, status: 409, stage: 'reporter-jira-update', reason: `Jira rejected Reporter update with HTTP ${response.status}`, jiraStatus: response.status, error: await response.text() };
+  return { ok: true, applied: true, accountId: String(reporter.accountId), displayName: reporter.creatorName };
 }
 
 function jiraDate(value) {
