@@ -89,7 +89,7 @@ async function jiraWebhook(request, env) {
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
 
   let status = String(parsed.body.status ?? '').trim();
-  const live = await getCardData(env, issueKey).catch(() => null);
+  let live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && live.status) status = live.status;
 
   const frozen = await env.CARD_MAP.get(freezeKey(issueKey), 'json').catch(() => null);
@@ -111,9 +111,20 @@ async function jiraWebhook(request, env) {
       env.CARD_MAP.get(customMapKey(issueKey)),
       env.CARD_MAP.get(directPendingKey(issueKey)),
     ]);
+
+    // Preserve the old production safety net as well as the new KV marker.
+    // Sticky-originated Jira issues carry Original Miro created; normal Jira
+    // issues do not. Re-read after the grace period so a fast creation webhook
+    // cannot race the marker and incorrectly create an Incoming card.
+    if (!nativeId && !customId && !directPending) {
+      live = await getCardData(env, issueKey).catch(() => null);
+      if (live?.ok && live.originalMiroCreated) {
+        return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
+      }
+    }
   }
 
-  if (!customId && directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true });
+  if (!customId && directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
 
   if (!nativeId && !customId) {
     const incomingCreate = await createIncomingCard(env, issueKey);
