@@ -68,7 +68,6 @@ async function directCard(request, env) {
   const issueKey = normalizeIssueKey(parsed.body.issueKey), x = Number(parsed.body.x), y = Number(parsed.body.y);
   if (!issueKeyIsValid(issueKey, env) || !Number.isFinite(x) || !Number.isFinite(y)) return json({ ok: false, reason: 'Invalid issue key or position' }, 400);
   const result = await createDirectCard(env, issueKey, x, y);
-  if (result.ok) await env.CARD_MAP.delete(directPendingKey(issueKey));
   return json(result, result.ok ? 200 : (result.status || 500));
 }
 
@@ -79,7 +78,13 @@ async function setConversionStatus(request, env) {
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
   await env.CARD_MAP.put(freezeKey(issueKey), JSON.stringify({ desiredStatus }), { expirationTtl: 30 });
   const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: false, firstMatchingTransition: true });
-  if (!result.ok || !result.changed) await env.CARD_MAP.delete(freezeKey(issueKey));
+  if (!result.ok) {
+    await Promise.all([env.CARD_MAP.delete(freezeKey(issueKey)), env.CARD_MAP.delete(directPendingKey(issueKey))]);
+  } else {
+    // Keep the freeze even when Jira was already in the desired status. A late
+    // Work item created webhook can otherwise recenter the directly-created card.
+    await env.CARD_MAP.delete(directPendingKey(issueKey));
+  }
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
 }
 
@@ -131,7 +136,10 @@ async function jiraWebhook(request, env) {
     }
   }
 
-  if (!customId && directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
+  // During sticky conversion the exact card position is authoritative. Suppress
+  // Jira-created webhooks even if the direct image has already been mapped; the
+  // marker is removed only when conversion status finalization has completed.
+  if (directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
 
   if (!nativeId && !customId) {
     const incomingCreate = await createIncomingCard(env, issueKey);
