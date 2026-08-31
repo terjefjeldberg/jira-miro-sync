@@ -1,6 +1,6 @@
 import incomingWorker from "./incoming-multipart-fix-entry.js";
 
-const CREATE_GRACE_MS = 3000;
+const SUPPRESS_WAIT_MS = 700;
 
 function normalizeIssueKey(value) {
   return String(value ?? "").trim().toUpperCase();
@@ -8,6 +8,17 @@ function normalizeIssueKey(value) {
 
 function customCardMapKey(issueKey) {
   return `custom-card:${normalizeIssueKey(issueKey)}`;
+}
+
+function suppressKey(issueKey) {
+  return `incoming-suppress:${normalizeIssueKey(issueKey)}`;
+}
+
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export default {
@@ -30,29 +41,32 @@ export default {
       return incomingWorker.fetch(request, env, ctx);
     }
 
-    const mapKey = customCardMapKey(issueKey);
-    const existing = await env.CARD_MAP.get(mapKey);
+    const existing = await env.CARD_MAP.get(customCardMapKey(issueKey));
+    if (existing) {
+      return incomingWorker.fetch(request, env, ctx);
+    }
 
-    // A sticky -> Jira conversion creates the Jira issue first and then
-    // replaces the sticky with/registers its Miro custom card. Jira's
-    // "Work item created" automation can reach this Worker in the tiny gap
-    // between those two operations. Without a grace period, the Incoming
-    // auto-create path sees an unmapped Jira issue and creates a second card.
-    //
-    // Give the conversion flow a short chance to register its mapping. Normal
-    // Jira-created issues simply wait these few seconds before appearing in
-    // Incoming. Mapped issues/status changes are never delayed.
-    if (!existing) {
-      await new Promise(resolve => setTimeout(resolve, CREATE_GRACE_MS));
+    let suppressed = await env.CARD_MAP.get(suppressKey(issueKey));
+    if (!suppressed) {
+      await new Promise(resolve => setTimeout(resolve, SUPPRESS_WAIT_MS));
+      suppressed = await env.CARD_MAP.get(suppressKey(issueKey));
+    }
 
-      const mappingAfterGrace = await env.CARD_MAP.get(mapKey);
-      if (mappingAfterGrace) {
-        console.log(
-          "JIRA -> MIRO Incoming create skipped after mapping appeared during grace period:",
-          issueKey,
-          mappingAfterGrace,
-        );
-      }
+    if (suppressed) {
+      await env.CARD_MAP.delete(suppressKey(issueKey));
+      console.log("JIRA -> MIRO Incoming create suppressed for Miro-origin issue:", issueKey);
+      return jsonResponse({
+        ok: true,
+        moved: false,
+        issueKey,
+        status: String(body?.status ?? ""),
+        incomingCreate: {
+          ok: true,
+          created: false,
+          skipped: true,
+          reason: "Issue originated from Miro sticky conversion",
+        },
+      });
     }
 
     return incomingWorker.fetch(request, env, ctx);
