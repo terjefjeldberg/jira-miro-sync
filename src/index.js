@@ -1,4 +1,4 @@
-import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nativeMapKey, normalizeIssueKey } from './config.js';
+import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nativeMapKey, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
@@ -41,11 +41,21 @@ async function stickyToJira(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const body = parsed.body;
-  const reporter = await resolveReporter(env, body.stickyId, body.createdBy);
+  const stickyId = String(body.stickyId ?? '').trim();
+  const reporter = await resolveReporter(env, stickyId, body.createdBy);
   if (!reporter.ok) return json(reporter, reporter.status || 409);
-  const created = await createIssueFromSticky(env, body.summary, String(body.workType ?? '').trim());
-  if (!created.ok) return json(created, created.status || 500);
-  await env.CARD_MAP.put(directPendingKey(created.issueKey), JSON.stringify({ stickyId: String(body.stickyId ?? '') }), { expirationTtl: 90 });
+
+  const cachedIssueKey = normalizeIssueKey(await env.CARD_MAP.get(stickyIssueKey(stickyId)));
+  let created;
+  if (cachedIssueKey && issueKeyIsValid(cachedIssueKey, env)) {
+    created = { ok: true, created: false, reused: true, issueKey: cachedIssueKey, workType: String(body.workType ?? '').trim(), summary: String(body.summary ?? '').replace(/\s+/g, ' ').trim() };
+  } else {
+    created = await createIssueFromSticky(env, body.summary, String(body.workType ?? '').trim());
+    if (!created.ok) return json(created, created.status || 500);
+    await env.CARD_MAP.put(stickyIssueKey(stickyId), created.issueKey, { expirationTtl: 86400 });
+  }
+
+  await env.CARD_MAP.put(directPendingKey(created.issueKey), JSON.stringify({ stickyId }), { expirationTtl: 90 });
   const reporterUpdate = await applyReporter(env, created.issueKey, reporter);
   if (!reporterUpdate.ok) return json({ ...created, ok: false, reason: reporterUpdate.reason, reporterSync: reporterUpdate }, reporterUpdate.status || 409);
   const originalMiroCreatedSync = await applyStickyMetadata(env, created.issueKey, reporter);
