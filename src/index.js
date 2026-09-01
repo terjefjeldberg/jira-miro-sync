@@ -31,14 +31,14 @@ async function miroToJira(request, env) {
   const body = parsed.body;
   const boardId = String(body.boardId ?? '').trim();
   const issueKey = normalizeIssueKey(body.issueKey);
-  const itemId = String(body.groupId ?? body.itemId ?? '').trim();
+  const itemId = String(body.itemId ?? '').trim();
   const desiredStatus = String(body.desiredStatus ?? '').trim();
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved` });
-  if (!itemId) return json({ ok: false, reason: 'Missing custom-card container ID' }, 400);
+  if (!itemId) return json({ ok: false, reason: 'Missing custom-card image ID' }, 400);
   await env.CARD_MAP.put(customMapKey(issueKey), itemId);
   const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
-  return json({ ...result, issueKey, groupId: itemId }, result.ok ? 200 : (result.status || 500));
+  return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 500));
 }
 
 async function stickyToJira(request, env) {
@@ -144,9 +144,13 @@ async function jiraWebhook(request, env) {
   }
 
   const custom = await moveMappedItemToStatus(env, String(customId), status);
-  const customRefresh = await refreshCard(env, issueKey);
+  if (custom?.missing) {
+    await env.CARD_MAP.delete(customMapKey(issueKey));
+    const incomingCreate = await createIncomingCard(env, issueKey);
+    return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
+  }
 
-  if (custom?.missing) await env.CARD_MAP.delete(customMapKey(issueKey));
+  const customRefresh = await refreshCard(env, issueKey);
   const ok = custom.ok !== false && customRefresh.ok !== false;
   return json({ ok, issueKey, status, moved: Boolean(custom.moved), custom, customRefresh }, ok ? 200 : 500);
 }
