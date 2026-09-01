@@ -86,7 +86,6 @@ export function config(env) {
 export const normalizeIssueKey = value => String(value ?? '').trim().toUpperCase();
 export const normalizeStatus = value => String(value ?? '').trim().toLowerCase();
 export const issueKeyIsValid = (value, env) => new RegExp(`^${escapeRegex(config(env).jiraProjectKey)}-\\d+$`, 'i').test(String(value ?? '').trim());
-export const nativeMapKey = key => `jira-card:${normalizeIssueKey(key)}`;
 export const customMapKey = key => `custom-card:${normalizeIssueKey(key)}`;
 export const reporterMapKey = id => `reporter-account:${String(id ?? '').trim()}`;
 export const freezeKey = key => `conversion-freeze:${normalizeIssueKey(key)}`;
