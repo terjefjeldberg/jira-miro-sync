@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
-import { createDirectCard, refreshCard } from '../src/cards.js';
+import { createDirectCard } from '../src/cards.js';
 import { transitionIssue } from '../src/jira.js';
 import { customMapKey, directPendingKey, freezeKey } from '../src/config.js';
 
@@ -41,7 +41,7 @@ const baseEnv = {
 }
 
 // Sticky conversion deliberately bypasses that gate and may use the first Jira
-// transition to the requested status, matching the working pre-refactor flow.
+// transition to the requested status.
 {
   const oldFetch = globalThis.fetch;
   let transitioned = false;
@@ -62,8 +62,8 @@ const baseEnv = {
   globalThis.fetch = oldFetch;
 }
 
-// A direct sticky conversion reuses and repositions an image that a racing Jira
-// creation webhook may already have created in Incoming.
+// A direct sticky conversion reuses and repositions an existing SVG custom card
+// that a racing Jira creation webhook may already have created in Incoming.
 {
   const kv = new FakeKv({ [customMapKey('SN-3')]: 'img-3' });
   const env = { ...baseEnv, CARD_MAP: kv };
@@ -71,7 +71,7 @@ const baseEnv = {
   let patchBody = null;
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
-    if (value.endsWith('/items/img-3') && !init.method) return json({ id: 'img-3', type: 'image', position: { x: 10, y: 20 }, geometry: { width: 320 } });
+    if (value.endsWith('/items/img-3') && !init.method) return json({ id: 'img-3', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-3' }, position: { x: 10, y: 20 }, geometry: { width: 320 } });
     if (value.endsWith('/items/img-3') && init.method === 'PATCH') { patchBody = JSON.parse(init.body); return json({ id: 'img-3' }); }
     throw new Error(`Unexpected fetch ${value}`);
   };
@@ -80,25 +80,6 @@ const baseEnv = {
   assert.equal(result.itemId, 'img-3');
   assert.deepEqual(patchBody.parent, { id: null });
   assert.deepEqual(patchBody.position, { x: 123, y: 456, origin: 'center' });
-  globalThis.fetch = oldFetch;
-}
-
-// Legacy custom cards remain movable but are never sent to the image-only SVG
-// refresh endpoint.
-{
-  const kv = new FakeKv({ [customMapKey('SN-4')]: 'frame-4' });
-  const env = { ...baseEnv, CARD_MAP: kv };
-  const oldFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async url => {
-    calls += 1;
-    assert.match(String(url), /\/items\/frame-4$/);
-    return json({ id: 'frame-4', type: 'frame', position: { x: 1, y: 2 }, geometry: { width: 320, height: 120 } });
-  };
-  const result = await refreshCard(env, 'SN-4');
-  assert.equal(result.ok, true);
-  assert.equal(result.legacy, true);
-  assert.equal(calls, 1);
   globalThis.fetch = oldFetch;
 }
 
@@ -134,9 +115,8 @@ function token(secret) {
   globalThis.fetch = oldFetch;
 }
 
-// Finalizing conversion removes the pending marker but keeps the short freeze,
-// even when Jira was already in that status, so a late creation webhook cannot
-// recenter the card.
+// Finalizing conversion removes the pending marker but keeps the freeze,
+// even when Jira was already in that status, so a late webhook cannot recenter the card.
 {
   const secret = 'miro-secret';
   const kv = new FakeKv({ [directPendingKey('SN-6')]: JSON.stringify({ stickyId: 'sticky-6' }) });
