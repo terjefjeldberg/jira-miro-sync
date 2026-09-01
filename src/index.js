@@ -1,4 +1,4 @@
-import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nativeMapKey, normalizeIssueKey, stickyIssueKey } from './config.js';
+import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
@@ -14,27 +14,31 @@ async function bodyOr400(request) {
   return body == null ? { error: json({ ok: false, reason: 'Invalid JSON' }, 400) } : { body };
 }
 
-async function register(request, env, kind) {
+async function register(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const boardId = String(parsed.body.boardId ?? '').trim();
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
   const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
     .filter(entry => issueKeyIsValid(normalizeIssueKey(entry?.issueKey), env));
-  const mappings = await registerMappings(env, entries, kind);
+  const mappings = await registerMappings(env, entries);
   return json({ ok: true, registered: mappings.length, mappings });
 }
 
-async function miroToJira(request, env, custom) {
+async function miroToJira(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
-  const body = parsed.body, boardId = String(body.boardId ?? '').trim(), issueKey = normalizeIssueKey(body.issueKey), itemId = String(custom ? body.groupId ?? body.itemId ?? '' : body.itemId ?? '').trim(), desiredStatus = String(body.desiredStatus ?? '').trim();
+  const body = parsed.body;
+  const boardId = String(body.boardId ?? '').trim();
+  const issueKey = normalizeIssueKey(body.issueKey);
+  const itemId = String(body.groupId ?? body.itemId ?? '').trim();
+  const desiredStatus = String(body.desiredStatus ?? '').trim();
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved` });
-  if (!itemId) return json({ ok: false, reason: custom ? 'Missing custom-card container ID' : 'Missing Miro item ID' }, 400);
-  await env.CARD_MAP.put((custom ? customMapKey : nativeMapKey)(issueKey), itemId);
+  if (!itemId) return json({ ok: false, reason: 'Missing custom-card container ID' }, 400);
+  await env.CARD_MAP.put(customMapKey(issueKey), itemId);
   const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
-  return json({ ...result, issueKey, ...(custom ? { groupId: itemId } : { itemId }) }, result.ok ? 200 : (result.status || 500));
+  return json({ ...result, issueKey, groupId: itemId }, result.ok ? 200 : (result.status || 500));
 }
 
 async function stickyToJira(request, env) {
@@ -81,8 +85,6 @@ async function setConversionStatus(request, env) {
   if (!result.ok) {
     await Promise.all([env.CARD_MAP.delete(freezeKey(issueKey)), env.CARD_MAP.delete(directPendingKey(issueKey))]);
   } else {
-    // Keep the freeze even when Jira was already in the desired status. A late
-    // Work item created webhook can otherwise recenter the directly-created card.
     await env.CARD_MAP.delete(directPendingKey(issueKey));
   }
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
@@ -114,21 +116,19 @@ async function jiraWebhook(request, env) {
     return json({ ok: true, moved: false, issueKey, status, conversionPositionPreserved: true });
   }
 
-  let [nativeId, customId, directPending] = await Promise.all([
-    env.CARD_MAP.get(nativeMapKey(issueKey)),
+  let [customId, directPending] = await Promise.all([
     env.CARD_MAP.get(customMapKey(issueKey)),
     env.CARD_MAP.get(directPendingKey(issueKey)),
   ]);
 
-  if (!nativeId && !customId && !directPending) {
+  if (!customId && !directPending) {
     await new Promise(resolve => setTimeout(resolve, 750));
-    [nativeId, customId, directPending] = await Promise.all([
-      env.CARD_MAP.get(nativeMapKey(issueKey)),
+    [customId, directPending] = await Promise.all([
       env.CARD_MAP.get(customMapKey(issueKey)),
       env.CARD_MAP.get(directPendingKey(issueKey)),
     ]);
 
-    if (!nativeId && !customId && !directPending) {
+    if (!customId && !directPending) {
       live = await getCardData(env, issueKey).catch(() => null);
       if (live?.ok && live.originalMiroCreated) {
         return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
@@ -136,26 +136,19 @@ async function jiraWebhook(request, env) {
     }
   }
 
-  // During sticky conversion the exact card position is authoritative. Suppress
-  // Jira-created webhooks even if the direct image has already been mapped; the
-  // marker is removed only when conversion status finalization has completed.
   if (directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
 
-  if (!nativeId && !customId) {
+  if (!customId) {
     const incomingCreate = await createIncomingCard(env, issueKey);
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
-  const [native, custom] = await Promise.all([
-    nativeId ? moveMappedItemToStatus(env, String(nativeId), status, { native: true }) : Promise.resolve({ ok: true, mapped: false, moved: false }),
-    customId ? moveMappedItemToStatus(env, String(customId), status) : Promise.resolve({ ok: true, mapped: false, moved: false }),
-  ]);
-  const customRefresh = customId ? await refreshCard(env, issueKey) : null;
+  const custom = await moveMappedItemToStatus(env, String(customId), status);
+  const customRefresh = await refreshCard(env, issueKey);
 
-  if (native?.missing) await env.CARD_MAP.delete(nativeMapKey(issueKey));
   if (custom?.missing) await env.CARD_MAP.delete(customMapKey(issueKey));
-  const ok = native.ok !== false && custom.ok !== false && (!customRefresh || customRefresh.ok !== false);
-  return json({ ok, issueKey, status, moved: Boolean(native.moved || custom.moved), native, custom, customRefresh }, ok ? 200 : 500);
+  const ok = custom.ok !== false && customRefresh.ok !== false;
+  return json({ ok, issueKey, status, moved: Boolean(custom.moved), custom, customRefresh }, ok ? 200 : 500);
 }
 
 export default {
@@ -170,10 +163,8 @@ export default {
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
     if (method === 'GET' && path === '/miro-panel') return renderPanel();
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
-    if (method === 'POST' && path === '/register-cards') return register(request, env, 'native');
-    if (method === 'POST' && path === '/register-custom-cards') return register(request, env, 'custom');
-    if (method === 'POST' && path === '/miro-to-jira') return miroToJira(request, env, false);
-    if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env, true);
+    if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
+    if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
     if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env);
     if (method === 'POST' && path === '/conversion-set-status') return setConversionStatus(request, env);
