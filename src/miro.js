@@ -104,33 +104,6 @@ function overlap(centerX, width, column) {
   return Math.max(0, Math.min(right, column.right) - Math.max(left, column.left)) / width;
 }
 
-async function moveLegacyGroup(env, groupId, target) {
-  const cfg = config(env);
-  const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/groups/${encodeURIComponent(groupId)}`, { headers: miroHeaders(env) });
-  if (response.status === 404) return { ok: true, mapped: false, moved: false, missing: true };
-  if (!response.ok) return { ok: false, stage: 'legacy-group-read', miroStatus: response.status, error: await response.text() };
-  const body = await response.json();
-  const raw = Array.isArray(body?.data?.items) ? body.data.items : Array.isArray(body?.items) ? body.items : Array.isArray(body?.data) ? body.data : [];
-  const ids = [...new Set(raw.map(item => typeof item === 'string' ? item : String(item?.id ?? item?.itemId ?? '')).filter(Boolean))];
-  const reads = await Promise.all(ids.map(id => getItem(env, id)));
-  if (reads.some(read => !read.ok || !read.found)) return { ok: false, stage: 'legacy-group-child-read', reason: 'Could not read every legacy custom-card child' };
-  const items = reads.map(read => read.item);
-  const background = items.find(item => item?.type === 'shape' && Math.abs(Number(item?.geometry?.width) - cfg.card.width) < 5 && Math.abs(Number(item?.geometry?.height) - cfg.card.height) < 5);
-  const x = Number(background?.position?.x), y = Number(background?.position?.y), width = Number(background?.geometry?.width);
-  if (![x, y, width].every(Number.isFinite)) return { ok: false, stage: 'legacy-group-geometry', reason: 'Could not identify legacy custom-card background' };
-  if (!insideBoard(cfg.layout, x, y)) return { ok: true, mapped: true, moved: false, parked: true };
-  if (overlap(x, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
-  const deltaX = target.targetX - x;
-  const moves = await Promise.all(items.map(async item => {
-    const itemX = Number(item?.position?.x), itemY = Number(item?.position?.y);
-    if (!Number.isFinite(itemX) || !Number.isFinite(itemY)) return { ok: false, reason: 'invalid-geometry' };
-    const patch = await patchItem(env, String(item.id), { position: { x: itemX + deltaX, y: itemY, origin: 'center' } });
-    return patch.ok ? { ok: true } : { ok: false, status: patch.status, error: await patch.text() };
-  }));
-  const failed = moves.find(move => !move.ok);
-  return failed ? { ok: false, stage: 'legacy-group-move', miroStatus: failed.status, error: failed.error ?? failed.reason } : { ok: true, mapped: true, moved: true, legacyGroupId: groupId, fromX: x, toX: target.targetX, yPreserved: y, movementMode: 'legacy-group' };
-}
-
 async function findWorkflowFrame(env, canvasX, canvasY) {
   const cfg = config(env);
   const frames = await listItems(env, { type: 'frame' });
@@ -150,8 +123,10 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   if (!target) return { ok: true, moved: false, ignored: true, reason: `Unapproved status: ${status}` };
   const read = await getItem(env, itemId);
   if (!read.ok) return { ok: false, stage: 'miro-read', miroStatus: read.status, error: read.error };
-  if (!read.found) return moveLegacyGroup(env, itemId, target);
+  if (!read.found) return { ok: true, mapped: false, moved: false, missing: true };
   const item = read.item;
+  if (String(item?.type ?? '') !== 'image' || !issueKeyFromImage(item)) return { ok: true, mapped: false, moved: false, missing: true, unsupported: true };
+
   const width = Number(item?.geometry?.width ?? item?.width);
   const rawX = Number(item?.position?.x ?? item?.x), rawY = Number(item?.position?.y ?? item?.y);
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(rawX) || !Number.isFinite(rawY)) return { ok: false, stage: 'miro-geometry', reason: 'Invalid Miro item geometry' };
@@ -180,7 +155,7 @@ export async function moveMappedItemToStatus(env, itemId, status) {
 }
 
 export async function registerMappings(env, entries) {
-  const valid = entries.slice(0, 500).map(entry => ({ issueKey: normalizeIssueKey(entry.issueKey), itemId: String(entry.itemId ?? entry.groupId ?? '').trim() })).filter(entry => entry.issueKey && entry.itemId);
+  const valid = entries.slice(0, 500).map(entry => ({ issueKey: normalizeIssueKey(entry.issueKey), itemId: String(entry.itemId ?? '').trim() })).filter(entry => entry.issueKey && entry.itemId);
   await Promise.all(valid.map(entry => env.CARD_MAP.put(customMapKey(entry.issueKey), entry.itemId)));
   return valid;
 }
