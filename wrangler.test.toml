@@ -1,0 +1,8 @@
+name = "jira-to-miro-refactor-test"
+main = "src/index.js"
+compatibility_date = "2026-08-24"
+keep_vars = true
+
+[[kv_namespaces]]
+binding = "CARD_MAP"
+id = "a30e97dd100c4b8b99dcda316133c51b"
