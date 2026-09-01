@@ -1,4 +1,4 @@
-import { config, customMapKey, nativeMapKey, normalizeIssueKey, normalizeStatus } from './config.js';
+import { config, customMapKey, normalizeIssueKey, normalizeStatus } from './config.js';
 
 export const miroHeaders = env => ({ Authorization: `Bearer ${env.MIRO_TOKEN}`, Accept: 'application/json' });
 const itemsBase = env => `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items`;
@@ -144,13 +144,13 @@ async function findWorkflowFrame(env, canvasX, canvasY) {
   }).filter(Boolean).sort((a, b) => a.area - b.area)[0] || null;
 }
 
-export async function moveMappedItemToStatus(env, itemId, status, { native = false } = {}) {
+export async function moveMappedItemToStatus(env, itemId, status) {
   const cfg = config(env);
   const target = cfg.layout.columns.find(column => normalizeStatus(column.status) === normalizeStatus(status));
   if (!target) return { ok: true, moved: false, ignored: true, reason: `Unapproved status: ${status}` };
   const read = await getItem(env, itemId);
   if (!read.ok) return { ok: false, stage: 'miro-read', miroStatus: read.status, error: read.error };
-  if (!read.found) return native ? { ok: true, mapped: false, moved: false, missing: true } : moveLegacyGroup(env, itemId, target);
+  if (!read.found) return moveLegacyGroup(env, itemId, target);
   const item = read.item;
   const width = Number(item?.geometry?.width ?? item?.width);
   const rawX = Number(item?.position?.x ?? item?.x), rawY = Number(item?.position?.y ?? item?.y);
@@ -172,24 +172,16 @@ export async function moveMappedItemToStatus(env, itemId, status, { native = fal
   const canvas = await resolveCanvasPosition(env, item);
   if (!canvas) return { ok: false, stage: 'miro-resolve-position', reason: 'Could not resolve canvas position' };
   const frame = await findWorkflowFrame(env, canvas.x, canvas.y);
-  if (!frame) {
-    if (native && insideBoard(cfg.layout, rawX, rawY)) {
-      if (overlap(rawX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
-      const response = await patchItem(env, itemId, { position: { x: target.targetX, y: rawY, origin: 'center' } });
-      return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: rawX, toX: target.targetX, yPreserved: rawY, movementMode: 'native-direct' } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
-    }
-    return { ok: true, mapped: true, moved: false, parked: true };
-  }
+  if (!frame) return { ok: true, mapped: true, moved: false, parked: true };
   if (overlap(frame.localX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
   const targetCanvasX = frame.left + target.targetX;
   const response = await patchItem(env, itemId, { position: { x: targetCanvasX, y: canvas.y, origin: 'center' } });
   return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: targetCanvasX, yPreserved: canvas.y, movementMode: 'canvas' } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
 }
 
-export async function registerMappings(env, entries, kind) {
-  const keyFn = kind === 'native' ? nativeMapKey : customMapKey;
+export async function registerMappings(env, entries) {
   const valid = entries.slice(0, 500).map(entry => ({ issueKey: normalizeIssueKey(entry.issueKey), itemId: String(entry.itemId ?? entry.groupId ?? '').trim() })).filter(entry => entry.issueKey && entry.itemId);
-  await Promise.all(valid.map(entry => env.CARD_MAP.put(keyFn(entry.issueKey), entry.itemId)));
+  await Promise.all(valid.map(entry => env.CARD_MAP.put(customMapKey(entry.issueKey), entry.itemId)));
   return valid;
 }
 
