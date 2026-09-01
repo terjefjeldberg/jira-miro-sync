@@ -3,7 +3,7 @@ import { getCardData } from './jira.js';
 import { deleteImage, getItem, incomingPosition, listItems, issueKeyFromImage, patchItem, replaceSvg, uploadSvg } from './miro.js';
 
 function esc(value) {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 function width(text, size) {
@@ -11,8 +11,8 @@ function width(text, size) {
   for (const char of String(text ?? '')) {
     if (char === ' ' || /[ilI1.,'!:;|]/.test(char)) units += 0.28;
     else if (/[mwMW@#%&]/.test(char)) units += 0.9;
-    else if (/[A-Z0-9]/.test(char)) units += 0.62;
-    else units += 0.54;
+    else if (/[A-Z0-9]/.test(char)) units += 0.72;
+    else units += 0.56;
   }
   return units * size;
 }
@@ -43,13 +43,13 @@ function wrap(text, size, maxWidth) {
 }
 
 function titleLayout(text) {
-  const box = { x: 20, y: 26, width: 280, height: 56 };
-  for (let size = 44; size >= 10; size -= 1) {
+  const box = { x: 28, y: 26, width: 264, height: 56 };
+  for (let size = 44; size >= 9; size -= 1) {
     const lines = wrap(text, size, box.width);
     const lineHeight = size * 1.05;
     if (lines.length <= 4 && lines.length * lineHeight <= box.height) return { x: 160, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
   }
-  const size = 10, lines = wrap(text, size, box.width).slice(0, 4), lineHeight = size * 1.05;
+  const size = 9, lines = wrap(text, size, box.width).slice(0, 4), lineHeight = size * 1.05;
   return { x: 160, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
 }
 
