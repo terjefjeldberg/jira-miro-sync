@@ -95,15 +95,6 @@ async function setConversionStatus(request, env) {
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
 }
 
-async function conversionCardId(request, env) {
-  const auth = await requireMiroJson(request, env); if (auth) return auth;
-  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
-  const issueKey = normalizeIssueKey(parsed.body.issueKey);
-  if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
-  const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
-  return json({ ok: true, issueKey, mapped: Boolean(itemId), itemId: itemId || null });
-}
-
 async function jiraWebhook(request, env) {
   if (!env.JIRA_WEBHOOK_SECRET) return json({ ok: false, reason: 'JIRA_WEBHOOK_SECRET is not configured' }, 500);
   if (!requireJiraWebhook(request, env)) return json({ ok: false, reason: 'Invalid Jira webhook secret' }, 401);
@@ -177,23 +168,6 @@ export default {
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
     if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env);
     if (method === 'POST' && path === '/conversion-set-status') return setConversionStatus(request, env);
-    if (method === 'POST' && path === '/conversion-card-id') return conversionCardId(request, env);
-    if (method === 'POST' && path === '/jira-card-data') {
-      const auth = await requireMiroJson(request, env); if (auth) return auth;
-      const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
-      const issueKey = normalizeIssueKey(parsed.body.issueKey);
-      if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
-      const data = await getCardData(env, issueKey);
-      return json(data.ok ? { ...data, browseUrl: `${config(env).jiraSiteUrl}/browse/${encodeURIComponent(issueKey)}` } : data, data.ok ? 200 : 502);
-    }
-    if (method === 'POST' && path === '/custom-card-pending') {
-      const auth = await requireMiroJson(request, env); if (auth) return auth;
-      return json({ ok: true, moves: [], disabled: true, reason: 'Jira -> Miro custom movement is handled server-side' });
-    }
-    if (method === 'POST' && path === '/custom-card-ack') {
-      const auth = await requireMiroJson(request, env); if (auth) return auth;
-      return json({ ok: true, acknowledged: true });
-    }
     if (method === 'POST' && path === '/') return jiraWebhook(request, env);
     return new Response('Not found', { status: 404 });
   },
