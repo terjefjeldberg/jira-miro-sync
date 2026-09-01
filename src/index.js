@@ -80,7 +80,7 @@ async function setConversionStatus(request, env) {
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const issueKey = normalizeIssueKey(parsed.body.issueKey), desiredStatus = String(parsed.body.desiredStatus ?? '').trim();
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: false, reason: 'Invalid issue key' }, 400);
-  await env.CARD_MAP.put(freezeKey(issueKey), JSON.stringify({ desiredStatus }), { expirationTtl: 30 });
+  await env.CARD_MAP.put(freezeKey(issueKey), JSON.stringify({ desiredStatus }), { expirationTtl: 60 });
   let result;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt) await new Promise(resolve => setTimeout(resolve, attempt * 500));
