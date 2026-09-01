@@ -92,7 +92,7 @@ export async function createDirectCard(env, issueKey, x, y) {
 
   const read = await getItem(env, result.itemId);
   if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
-  if (!read.found) {
+  if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
     return createCard(env, issueKey, { x, y });
   }
@@ -134,13 +134,12 @@ export async function refreshCard(env, issueKey) {
   const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (!itemId) return { ok: true, refreshed: false, mapped: false };
 
-  // Only the compact refactor's custom cards are SVG images. Older frame,
-  // app-card and group representations remain movable, but must not be sent to
-  // Miro's /images PATCH endpoint when Jira fields change.
   const read = await getItem(env, itemId);
   if (!read.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-miro', miroStatus: read.status, error: read.error };
-  if (!read.found) return { ok: true, refreshed: false, mapped: true, legacyOrMissing: true };
-  if (String(read.item?.type ?? '') !== 'image') return { ok: true, refreshed: false, mapped: true, legacy: true, itemType: read.item?.type ?? null };
+  if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
+    await env.CARD_MAP.delete(customMapKey(issueKey));
+    return { ok: true, refreshed: false, mapped: false, missing: true };
+  }
 
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
