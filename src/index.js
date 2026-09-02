@@ -2,7 +2,7 @@ import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nor
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
-import { moveMappedItemToStatus, registerMappings } from './miro.js';
+import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderPanel, renderPanelClient } from './ui.js';
 
 async function requireMiroJson(request, env) {
@@ -12,6 +12,18 @@ async function requireMiroJson(request, env) {
 async function bodyOr400(request) {
   const body = await readJson(request);
   return body == null ? { error: json({ ok: false, reason: 'Invalid JSON' }, 400) } : { body };
+}
+
+async function recoverCustomMapping(env, issueKey) {
+  const listed = await listItems(env, { type: 'image' });
+  if (!listed.ok) return { ok: false, status: listed.status, error: listed.error };
+
+  const item = listed.items.find(candidate => issueKeyFromImage(candidate) === issueKey);
+  const itemId = String(item?.id ?? '').trim();
+  if (!itemId) return { ok: true, recovered: false };
+
+  await env.CARD_MAP.put(customMapKey(issueKey), itemId);
+  return { ok: true, recovered: true, itemId };
 }
 
 async function register(request, env) {
@@ -118,6 +130,7 @@ async function jiraWebhook(request, env) {
     return json({ ok: true, moved: false, issueKey, status, conversionPositionPreserved: true });
   }
 
+  let mappingRecoveredFromBoard = false;
   let [customId, directPending] = await Promise.all([
     env.CARD_MAP.get(customMapKey(issueKey)),
     env.CARD_MAP.get(directPendingKey(issueKey)),
@@ -129,6 +142,17 @@ async function jiraWebhook(request, env) {
       env.CARD_MAP.get(customMapKey(issueKey)),
       env.CARD_MAP.get(directPendingKey(issueKey)),
     ]);
+
+    if (!customId && !directPending) {
+      const recovered = await recoverCustomMapping(env, issueKey);
+      if (!recovered.ok) {
+        return json({ ok: false, moved: false, issueKey, status, stage: 'recover-custom-mapping', miroStatus: recovered.status, error: recovered.error }, 502);
+      }
+      if (recovered.recovered) {
+        customId = recovered.itemId;
+        mappingRecoveredFromBoard = true;
+      }
+    }
 
     if (!customId && !directPending) {
       live = await getCardData(env, issueKey).catch(() => null);
@@ -154,7 +178,7 @@ async function jiraWebhook(request, env) {
 
   const customRefresh = await refreshCard(env, issueKey);
   const ok = custom.ok !== false && customRefresh.ok !== false;
-  return json({ ok, issueKey, status, moved: Boolean(custom.moved), custom, customRefresh }, ok ? 200 : 500);
+  return json({ ok, issueKey, status, moved: Boolean(custom.moved), mappingRecoveredFromBoard, custom, customRefresh }, ok ? 200 : 500);
 }
 
 export default {
