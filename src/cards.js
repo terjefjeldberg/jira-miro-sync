@@ -2,24 +2,6 @@ import { config, customMapKey, normalizeIssueKey, WORK_TYPE_COLORS } from './con
 import { getCardData } from './jira.js';
 import { deleteImage, getItem, incomingPosition, listItems, issueKeyFromImage, patchItem, replaceSvg, uploadSvg } from './miro.js';
 
-const incomingQueues = new Map();
-
-async function withIncomingQueue(issueKey, task) {
-  const key = normalizeIssueKey(issueKey);
-  const previous = incomingQueues.get(key) || Promise.resolve();
-  let release;
-  const current = new Promise(resolve => { release = resolve; });
-  const tail = previous.catch(() => {}).then(() => current);
-  incomingQueues.set(key, tail);
-  await previous.catch(() => {});
-  try {
-    return await task();
-  } finally {
-    release();
-    if (incomingQueues.get(key) === tail) incomingQueues.delete(key);
-  }
-}
-
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
 }
@@ -135,44 +117,16 @@ async function dedupeIncoming(env, issueKey, createdItemId) {
   return { keptItemId: keep, removedItemIds: removed };
 }
 
-async function findIncomingCard(env, issueKey) {
-  const cfg = config(env);
-  const listed = await listItems(env, { parent_item_id: cfg.incomingFrameId });
-  if (!listed.ok) return null;
-  const ids = listed.items
-    .filter(item => issueKeyFromImage(item) === issueKey)
-    .map(item => String(item.id))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  if (!ids.length) return null;
-  const itemId = ids[0];
-  await env.CARD_MAP.put(customMapKey(issueKey), itemId);
-  return itemId;
-}
-
 export async function createIncomingCard(env, issueKey) {
   issueKey = normalizeIssueKey(issueKey);
-  return withIncomingQueue(issueKey, async () => {
-    let existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
-    if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
-
-    // Recover an already-created card before allocating a new slot. This makes
-    // repeated/duplicate webhooks idempotent even if KV mapping was delayed.
-    existing = await findIncomingCard(env, issueKey);
-    if (existing) return { ok: true, created: false, mapped: true, recoveredFromBoard: true, itemId: existing };
-
-    const position = await incomingPosition(env);
-    if (!position.ok) return position;
-
-    // Re-check the mapping after the layout read, since another request may
-    // have completed while we were finding a free Incoming slot.
-    existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
-    if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
-
-    const created = await createCard(env, issueKey, position, position.parentId);
-    if (!created.ok) return created;
-    const dedupe = await dedupeIncoming(env, issueKey, created.itemId);
-    return { ...created, itemId: dedupe.keptItemId, position, dedupe };
-  });
+  const existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
+  const position = await incomingPosition(env);
+  if (!position.ok) return position;
+  const created = await createCard(env, issueKey, position, position.parentId);
+  if (!created.ok) return created;
+  const dedupe = await dedupeIncoming(env, issueKey, created.itemId);
+  return { ...created, itemId: dedupe.keptItemId, position, dedupe };
 }
 
 export async function refreshCard(env, issueKey) {

@@ -5,24 +5,6 @@ import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
 import { moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderPanel, renderPanelClient } from './ui.js';
 
-const issueQueues = new Map();
-
-async function withIssueQueue(issueKey, task) {
-  const key = normalizeIssueKey(issueKey);
-  const previous = issueQueues.get(key) || Promise.resolve();
-  let release;
-  const current = new Promise(resolve => { release = resolve; });
-  const tail = previous.catch(() => {}).then(() => current);
-  issueQueues.set(key, tail);
-  await previous.catch(() => {});
-  try {
-    return await task();
-  } finally {
-    release();
-    if (issueQueues.get(key) === tail) issueQueues.delete(key);
-  }
-}
-
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
 }
@@ -54,28 +36,15 @@ async function miroToJira(request, env) {
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved` });
   if (!itemId) return json({ ok: false, reason: 'Missing custom-card image ID' }, 400);
+  await env.CARD_MAP.put(customMapKey(issueKey), itemId);
 
-  return withIssueQueue(issueKey, async () => {
-    await env.CARD_MAP.put(customMapKey(issueKey), itemId);
+  const live = await getCardData(env, issueKey).catch(() => null);
+  if (live?.ok && String(live.status ?? '').trim().toLowerCase() === desiredStatus.toLowerCase()) {
+    return json({ ok: true, changed: false, issueKey, itemId, currentStatus: live.status, desiredStatus, reason: 'Jira already has desired status' });
+  }
 
-    const live = await getCardData(env, issueKey).catch(() => null);
-    let result;
-    if (live?.ok && String(live.status ?? '').trim().toLowerCase() === desiredStatus.toLowerCase()) {
-      result = { ok: true, changed: false, issueKey, itemId, currentStatus: live.status, desiredStatus, reason: 'Jira already has desired status' };
-    } else {
-      result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
-    }
-
-    if (!result.ok) return json({ ...result, issueKey, itemId }, result.status || 500);
-
-    const finalLive = await getCardData(env, issueKey).catch(() => null);
-    let reconciliation = null;
-    if (finalLive?.ok && finalLive.status) {
-      reconciliation = await moveMappedItemToStatus(env, itemId, finalLive.status).catch(error => ({ ok: false, stage: 'final-miro-reconcile', error: String(error?.message || error) }));
-    }
-
-    return json({ ...result, issueKey, itemId, finalStatus: finalLive?.ok ? finalLive.status : null, reconciliation }, 200);
-  });
+  const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
+  return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 500));
 }
 
 async function stickyToJira(request, env) {
@@ -139,55 +108,53 @@ async function jiraWebhook(request, env) {
   const issueKey = normalizeIssueKey(parsed.body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
 
-  return withIssueQueue(issueKey, async () => {
-    let status = String(parsed.body.status ?? '').trim();
-    let live = await getCardData(env, issueKey).catch(() => null);
-    if (live?.ok && live.status) status = live.status;
+  let status = String(parsed.body.status ?? '').trim();
+  let live = await getCardData(env, issueKey).catch(() => null);
+  if (live?.ok && live.status) status = live.status;
 
-    const frozen = await env.CARD_MAP.get(freezeKey(issueKey), 'json').catch(() => null);
-    if (frozen?.desiredStatus && String(frozen.desiredStatus).trim().toLowerCase() === status.toLowerCase()) {
-      await env.CARD_MAP.delete(freezeKey(issueKey));
-      return json({ ok: true, moved: false, issueKey, status, conversionPositionPreserved: true });
-    }
+  const frozen = await env.CARD_MAP.get(freezeKey(issueKey), 'json').catch(() => null);
+  if (frozen?.desiredStatus && String(frozen.desiredStatus).trim().toLowerCase() === status.toLowerCase()) {
+    await env.CARD_MAP.delete(freezeKey(issueKey));
+    return json({ ok: true, moved: false, issueKey, status, conversionPositionPreserved: true });
+  }
 
-    let [customId, directPending] = await Promise.all([
+  let [customId, directPending] = await Promise.all([
+    env.CARD_MAP.get(customMapKey(issueKey)),
+    env.CARD_MAP.get(directPendingKey(issueKey)),
+  ]);
+
+  if (!customId && !directPending) {
+    await new Promise(resolve => setTimeout(resolve, 750));
+    [customId, directPending] = await Promise.all([
       env.CARD_MAP.get(customMapKey(issueKey)),
       env.CARD_MAP.get(directPendingKey(issueKey)),
     ]);
 
     if (!customId && !directPending) {
-      await new Promise(resolve => setTimeout(resolve, 750));
-      [customId, directPending] = await Promise.all([
-        env.CARD_MAP.get(customMapKey(issueKey)),
-        env.CARD_MAP.get(directPendingKey(issueKey)),
-      ]);
-
-      if (!customId && !directPending) {
-        live = await getCardData(env, issueKey).catch(() => null);
-        if (live?.ok && live.originalMiroCreated) {
-          return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
-        }
+      live = await getCardData(env, issueKey).catch(() => null);
+      if (live?.ok && live.originalMiroCreated) {
+        return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
       }
     }
+  }
 
-    if (directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
+  if (directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
 
-    if (!customId) {
-      const incomingCreate = await createIncomingCard(env, issueKey);
-      return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
-    }
+  if (!customId) {
+    const incomingCreate = await createIncomingCard(env, issueKey);
+    return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
+  }
 
-    const custom = await moveMappedItemToStatus(env, String(customId), status);
-    if (custom?.missing) {
-      await env.CARD_MAP.delete(customMapKey(issueKey));
-      const incomingCreate = await createIncomingCard(env, issueKey);
-      return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
-    }
+  const custom = await moveMappedItemToStatus(env, String(customId), status);
+  if (custom?.missing) {
+    await env.CARD_MAP.delete(customMapKey(issueKey));
+    const incomingCreate = await createIncomingCard(env, issueKey);
+    return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
+  }
 
-    const customRefresh = await refreshCard(env, issueKey);
-    const ok = custom.ok !== false && customRefresh.ok !== false;
-    return json({ ok, issueKey, status, moved: Boolean(custom.moved), custom, customRefresh }, ok ? 200 : 500);
-  });
+  const customRefresh = await refreshCard(env, issueKey);
+  const ok = custom.ok !== false && customRefresh.ok !== false;
+  return json({ ok, issueKey, status, moved: Boolean(custom.moved), custom, customRefresh }, ok ? 200 : 500);
 }
 
 export default {
