@@ -37,16 +37,12 @@ const healthBody = await health.json();
 assert.equal(healthBody.ok, true);
 assert.equal(healthBody.projectKey, 'SN');
 
-let appSource = '';
 for (const path of ['/app.js', '/panel.js']) {
   const response = await worker.fetch(new Request(`https://worker.test${path}`), env);
   assert.equal(response.status, 200);
   const source = await response.text();
   assert.doesNotThrow(() => new Function(source), `${path} must be valid browser JavaScript`);
-  if (path === '/app.js') appSource = source;
 }
-assert.match(appSource, /experimental:items:update/);
-assert.doesNotMatch(appSource, /setInterval\s*\(/, 'Miro drag sync must stay event-driven and must not poll');
 
 for (const path of ['/miro-app', '/miro-panel']) {
   const response = await worker.fetch(new Request(`https://worker.test${path}`), env);
@@ -59,10 +55,5 @@ assert.equal(missing.status, 404);
 
 const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(wrangler, /main\s*=\s*"src\/index\.js"/);
-
-const appUi = await readFile(new URL('../src/app-ui.js', import.meta.url), 'utf8');
-assert.doesNotMatch(appUi, /String\.raw/, 'Active Miro app client must not be embedded in String.raw');
-const appClient = await readFile(new URL('../src/app-client.js', import.meta.url), 'utf8');
-assert.match(appClient, /export async function appClientMain/);
 
 console.log('Compact Worker verification passed.');

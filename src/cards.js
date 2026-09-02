@@ -2,36 +2,6 @@ import { config, customMapKey, normalizeIssueKey, WORK_TYPE_COLORS } from './con
 import { getCardData } from './jira.js';
 import { deleteImage, getItem, incomingPosition, listItems, issueKeyFromImage, patchItem, replaceSvg, uploadSvg } from './miro.js';
 
-const creationTails = new Map();
-
-async function serializeCreation(issueKey, task) {
-  issueKey = normalizeIssueKey(issueKey);
-  const previous = creationTails.get(issueKey) || Promise.resolve();
-  let release;
-  const tail = new Promise(resolve => { release = resolve; });
-  creationTails.set(issueKey, tail);
-  await previous.catch(() => {});
-  try {
-    return await task();
-  } finally {
-    release();
-    if (creationTails.get(issueKey) === tail) creationTails.delete(issueKey);
-  }
-}
-
-let incomingTail = Promise.resolve();
-async function serializeIncomingLayout(task) {
-  const previous = incomingTail;
-  let release;
-  incomingTail = new Promise(resolve => { release = resolve; });
-  await previous.catch(() => {});
-  try {
-    return await task();
-  } finally {
-    release();
-  }
-}
-
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
 }
@@ -117,23 +87,21 @@ export async function createCard(env, issueKey, position, parentId = null) {
 export async function createDirectCard(env, issueKey, x, y) {
   if (![x, y].every(Number.isFinite)) return { ok: false, status: 400, reason: 'Invalid card position' };
   issueKey = normalizeIssueKey(issueKey);
-  return serializeCreation(issueKey, async () => {
-    const result = await createCard(env, issueKey, { x, y });
-    if (!result.ok || result.created) return result;
+  const result = await createCard(env, issueKey, { x, y });
+  if (!result.ok || result.created) return result;
 
-    const read = await getItem(env, result.itemId);
-    if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
-    if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
-      await env.CARD_MAP.delete(customMapKey(issueKey));
-      return createCard(env, issueKey, { x, y });
-    }
-    const moved = await patchItem(env, result.itemId, {
-      parent: { id: null },
-      position: { x, y, origin: 'center' },
-    });
-    if (!moved.ok) return { ok: false, status: 502, stage: 'direct-reposition-existing-card', miroStatus: moved.status, error: await moved.text() };
-    return { ...result, directPositionEnsured: true };
+  const read = await getItem(env, result.itemId);
+  if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
+  if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
+    await env.CARD_MAP.delete(customMapKey(issueKey));
+    return createCard(env, issueKey, { x, y });
+  }
+  const moved = await patchItem(env, result.itemId, {
+    parent: { id: null },
+    position: { x, y, origin: 'center' },
   });
+  if (!moved.ok) return { ok: false, status: 502, stage: 'direct-reposition-existing-card', miroStatus: moved.status, error: await moved.text() };
+  return { ...result, directPositionEnsured: true };
 }
 
 async function dedupeIncoming(env, issueKey, createdItemId) {
@@ -151,16 +119,14 @@ async function dedupeIncoming(env, issueKey, createdItemId) {
 
 export async function createIncomingCard(env, issueKey) {
   issueKey = normalizeIssueKey(issueKey);
-  return serializeCreation(issueKey, () => serializeIncomingLayout(async () => {
-    const existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
-    if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
-    const position = await incomingPosition(env);
-    if (!position.ok) return position;
-    const created = await createCard(env, issueKey, position, position.parentId);
-    if (!created.ok) return created;
-    const dedupe = await dedupeIncoming(env, issueKey, created.itemId);
-    return { ...created, itemId: dedupe.keptItemId, position, dedupe };
-  }));
+  const existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
+  const position = await incomingPosition(env);
+  if (!position.ok) return position;
+  const created = await createCard(env, issueKey, position, position.parentId);
+  if (!created.ok) return created;
+  const dedupe = await dedupeIncoming(env, issueKey, created.itemId);
+  return { ...created, itemId: dedupe.keptItemId, position, dedupe };
 }
 
 export async function refreshCard(env, issueKey) {
