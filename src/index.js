@@ -11,17 +11,15 @@ async function withIssueQueue(issueKey, task) {
   const key = normalizeIssueKey(issueKey);
   const previous = issueQueues.get(key) || Promise.resolve();
   let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  issueQueues.set(key, previous.catch(() => {}).then(() => gate));
+  const current = new Promise(resolve => { release = resolve; });
+  const tail = previous.catch(() => {}).then(() => current);
+  issueQueues.set(key, tail);
   await previous.catch(() => {});
   try {
     return await task();
   } finally {
     release();
-    if (issueQueues.get(key) === gate) issueQueues.delete(key);
-    setTimeout(() => {
-      if (issueQueues.get(key) === gate) issueQueues.delete(key);
-    }, 0);
+    if (issueQueues.get(key) === tail) issueQueues.delete(key);
   }
 }
 
@@ -70,8 +68,6 @@ async function miroToJira(request, env) {
 
     if (!result.ok) return json({ ...result, issueKey, itemId }, result.status || 500);
 
-    // Re-read Jira after the transition and make Miro converge to the actual
-    // final Jira status. This closes races with a near-simultaneous Jira edit.
     const finalLive = await getCardData(env, issueKey).catch(() => null);
     let reconciliation = null;
     if (finalLive?.ok && finalLive.status) {
