@@ -1,8 +1,9 @@
-name: Verify compact Worker
+name: Verify and deploy Worker
 
 on:
   push:
     branches:
+      - main
       - refactor/compact-production-worker
   pull_request:
 
@@ -15,3 +16,18 @@ jobs:
         with:
           node-version: 22
       - run: npm run verify
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Deploy production Worker
+        run: npx wrangler@4.127.1 deploy --keep-vars
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
