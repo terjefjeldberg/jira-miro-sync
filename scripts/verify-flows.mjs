@@ -123,6 +123,7 @@ function token(secret) {
   const env = { ...baseEnv, CARD_MAP: kv, JIRA_WEBHOOK_SECRET: 'webhook-secret' };
   const oldFetch = globalThis.fetch;
   let moveBody = null;
+  const finalWrites = [];
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
     if (value.includes('/issue/SN-4?fields=')) {
@@ -138,10 +139,14 @@ function token(secret) {
       return json({ id: 'workflow-frame', type: 'frame', position: { x: 3000, y: 2000 }, geometry: { width: 6000, height: 4000 } });
     }
     if (value.endsWith('/items/img-4') && init.method === 'PATCH') {
+      finalWrites.push('move');
       moveBody = JSON.parse(init.body);
       return json({ id: 'img-4' });
     }
-    if (value.endsWith('/images/img-4') && init.method === 'PATCH') return json({ id: 'img-4' });
+    if (value.endsWith('/images/img-4') && init.method === 'PATCH') {
+      finalWrites.push('refresh');
+      return json({ id: 'img-4' });
+    }
     throw new Error(`Unexpected fetch ${value}`);
   };
   const response = await worker.fetch(new Request('https://worker.test/', {
@@ -154,6 +159,7 @@ function token(secret) {
   assert.equal(body.mappingRecoveredFromBoard, true);
   assert.equal(body.moved, true);
   assert.equal(await kv.get(customMapKey('SN-4')), 'img-4');
+  assert.deepEqual(finalWrites, ['refresh', 'move']);
   assert.deepEqual(moveBody.position, { x: 2923.455009676509, y: 1000, origin: 'center' });
   globalThis.fetch = oldFetch;
 }
