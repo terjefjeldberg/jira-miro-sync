@@ -115,6 +115,49 @@ function token(secret) {
   globalThis.fetch = oldFetch;
 }
 
+// Jira -> Miro must recover a missing KV mapping from the board itself. This
+// keeps existing custom cards movable even when the Miro app's periodic scan
+// was stopped or its first registration request failed.
+{
+  const kv = new FakeKv();
+  const env = { ...baseEnv, CARD_MAP: kv, JIRA_WEBHOOK_SECRET: 'webhook-secret' };
+  const oldFetch = globalThis.fetch;
+  let moveBody = null;
+  globalThis.fetch = async (url, init = {}) => {
+    const value = String(url);
+    if (value.includes('/issue/SN-4?fields=')) {
+      return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11207: null } });
+    }
+    if (value.includes('/items?') && value.includes('type=image')) {
+      return json({ data: [{ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } }] });
+    }
+    if (value.endsWith('/items/img-4') && !init.method) {
+      return json({ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } });
+    }
+    if (value.endsWith('/items/workflow-frame')) {
+      return json({ id: 'workflow-frame', type: 'frame', position: { x: 3000, y: 2000 }, geometry: { width: 6000, height: 4000 } });
+    }
+    if (value.endsWith('/items/img-4') && init.method === 'PATCH') {
+      moveBody = JSON.parse(init.body);
+      return json({ id: 'img-4' });
+    }
+    if (value.endsWith('/images/img-4') && init.method === 'PATCH') return json({ id: 'img-4' });
+    throw new Error(`Unexpected fetch ${value}`);
+  };
+  const response = await worker.fetch(new Request('https://worker.test/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'webhook-secret' },
+    body: JSON.stringify({ issueKey: 'SN-4', status: 'In progress' }),
+  }), env);
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.mappingRecoveredFromBoard, true);
+  assert.equal(body.moved, true);
+  assert.equal(await kv.get(customMapKey('SN-4')), 'img-4');
+  assert.deepEqual(moveBody.position, { x: 2923.455009676509, y: 1000, origin: 'center' });
+  globalThis.fetch = oldFetch;
+}
+
 // Finalizing conversion removes the pending marker but keeps the freeze,
 // even when Jira was already in that status, so a late webhook cannot recenter the card.
 {
