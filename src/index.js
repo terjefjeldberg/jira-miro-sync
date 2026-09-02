@@ -5,6 +5,8 @@ import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
 import { moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderPanel, renderPanelClient } from './ui.js';
 
+const DRAG_DEBUG_KEY = 'diagnostic:drag:last';
+
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
 }
@@ -12,6 +14,24 @@ async function requireMiroJson(request, env) {
 async function bodyOr400(request) {
   const body = await readJson(request);
   return body == null ? { error: json({ ok: false, reason: 'Invalid JSON' }, 400) } : { body };
+}
+
+async function dragDebugWrite(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const entry = {
+    at: new Date().toISOString(),
+    stage: String(parsed.body.stage ?? '').slice(0, 80),
+    data: parsed.body.data && typeof parsed.body.data === 'object' ? parsed.body.data : {},
+  };
+  await env.CARD_MAP.put(DRAG_DEBUG_KEY, JSON.stringify(entry), { expirationTtl: 600 });
+  console.log('DRAG_DEBUG', JSON.stringify(entry));
+  return json({ ok: true });
+}
+
+async function dragDebugRead(env) {
+  const entry = await env.CARD_MAP.get(DRAG_DEBUG_KEY, 'json').catch(() => null);
+  return json({ ok: true, diagnostic: entry || null });
 }
 
 async function register(request, env) {
@@ -159,10 +179,12 @@ export default {
       const cfg = config(env);
       return json({ ok: true, cardMapConfigured: Boolean(env.CARD_MAP), miroClientSecretConfigured: Boolean(env.MIRO_CLIENT_SECRET), miroTokenConfigured: Boolean(env.MIRO_TOKEN), miroBoardConfigured: Boolean(env.MIRO_BOARD_ID), jiraTokenConfigured: Boolean(env.JIRA_API_TOKEN), jiraCloudIdConfigured: Boolean(env.JIRA_CLOUD_ID), jiraWebhookSecretConfigured: Boolean(env.JIRA_WEBHOOK_SECRET), projectKey: cfg.jiraProjectKey, incomingFrameId: cfg.incomingFrameId, testAreaField: cfg.fields.testArea });
     }
+    if (method === 'GET' && path === '/drag-debug') return dragDebugRead(env);
     if (method === 'GET' && path === '/miro-app') return renderApp();
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
     if (method === 'GET' && path === '/miro-panel') return renderPanel();
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
+    if (method === 'POST' && path === '/drag-debug') return dragDebugWrite(request, env);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
