@@ -169,14 +169,16 @@ async function jiraWebhook(request, env) {
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
+  // Replacing the SVG can also affect image item metadata in Miro. Refresh the
+  // resource first and make the position update the final write, so a Jira
+  // status change always leaves the card in the intended column.
+  const customRefresh = await refreshCard(env, issueKey);
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
     const incomingCreate = await createIncomingCard(env, issueKey);
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
-
-  const customRefresh = await refreshCard(env, issueKey);
   const ok = custom.ok !== false && customRefresh.ok !== false;
   return json({ ok, issueKey, status, moved: Boolean(custom.moved), mappingRecoveredFromBoard, custom, customRefresh }, ok ? 200 : 500);
 }
