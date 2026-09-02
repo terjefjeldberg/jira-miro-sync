@@ -4,7 +4,7 @@ import { text } from './auth.js';
 const sdk = '<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>';
 
 export function renderApp() {
-  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=12"></script></body></html>`, 'text/html; charset=utf-8');
+  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=13"></script></body></html>`, 'text/html; charset=utf-8');
 }
 
 export function renderPanel() {
@@ -32,7 +32,6 @@ function itemsUpdated(event){const items=event&&event.items||[],candidates=new S
 await miro.board.ui.on('icon:click',async()=>{try{await register();if(await miro.board.ui.canOpenPanel())await miro.board.ui.openPanel({url:'/miro-panel'})}catch(e){console.error(e)}});
 await miro.board.ui.on('experimental:items:update',itemsUpdated);
 await register();
-setInterval(()=>register().catch(console.error),10000);
 console.log('Jira/Miro SVG custom-card sync app ready');
 })();`;
   return text(script, 'application/javascript; charset=utf-8');
