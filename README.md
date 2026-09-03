@@ -130,3 +130,6 @@ Only after this list passes should the refactor replace `main`.
 ## Safe rollback
 
 The pre-refactor working snapshot is preserved on branch `backup/pre-refactor-2026-08-31`.
+## Developer guide
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the runtime flows, module responsibilities, required secrets and safe Miro-client change points.
