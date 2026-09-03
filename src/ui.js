@@ -1,6 +1,8 @@
 import { renderAppClient } from './app-client.js';
 import { renderPanelClient } from './panel-client.js';
 import { text } from './auth.js';
+export { renderAppClient } from './app-client.js';
+export { renderPanelClient } from './panel-client.js';
 
 const sdk = '<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>';
 
