@@ -55,7 +55,7 @@ export async function replaceSvg(env, itemId, issueKey, svg) {
   const resized = await fetch(url, {
     method: 'PATCH',
     headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width, height: config(env).card.height } }),
+    body: JSON.stringify({ data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width } }),
   });
   return resized.ok
     ? { ok: true, refreshed: true, resized: true }
