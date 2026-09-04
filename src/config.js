@@ -78,7 +78,7 @@ export function config(env) {
       nfDropdown2: env.JIRA_FIELD_NF_DROPDOWN_2 || 'customfield_10832',
       taskRequired: env.JIRA_FIELD_TASK_REQUIRED || 'customfield_10872',
     },
-    card: { width: 189, height: 123.12 },
+    card: { width: 189, height: 115 },
     incoming: { marginX: 36, marginY: 36, gapX: 20, gapY: 30, layerX: 24, layerY: 24, maxLayers: 12 },
   };
 }
