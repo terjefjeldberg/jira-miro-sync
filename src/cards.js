@@ -6,6 +6,9 @@ function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+const CARD_WIDTH = 189;
+const CARD_HEIGHT = 123.12;
+
 function width(text, size) {
   let units = 0;
   for (const char of String(text ?? '')) {
@@ -15,6 +18,17 @@ function width(text, size) {
     else units += 0.56;
   }
   return units * size;
+}
+
+function fit(text, size, maxWidth) {
+  const value = String(text ?? '').trim();
+  if (width(value, size) <= maxWidth) return value;
+  let result = '';
+  for (const char of value) {
+    if (width(result + char + '…', size) > maxWidth) break;
+    result += char;
+  }
+  return result ? result + '…' : '…';
 }
 
 function wrap(text, size, maxWidth) {
@@ -33,7 +47,7 @@ function wrap(text, size, maxWidth) {
       if (part) parts.push(part);
     }
     for (const part of parts) {
-      const candidate = current ? `${current} ${part}` : part;
+      const candidate = current ? \`${current} \`${part}\` : part;
       if (width(candidate, size) <= maxWidth) current = candidate;
       else { if (current) lines.push(current); current = part; }
     }
@@ -43,31 +57,33 @@ function wrap(text, size, maxWidth) {
 }
 
 function titleLayout(text) {
-  const box = { x: 28, y: 26, width: 264, height: 56 };
-  for (let size = 44; size >= 9; size -= 1) {
+  const box = { x: 10, y: 24, width: 169, height: 62 };
+  for (let size = 28; size >= 9; size -= 1) {
     const lines = wrap(text, size, box.width);
     const lineHeight = size * 1.05;
-    if (lines.length <= 4 && lines.length * lineHeight <= box.height) return { x: 160, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
+    if (lines.length <= 4 && lines.length * lineHeight <= box.height) return { x: 94.5, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
   }
   const size = 9, lines = wrap(text, size, box.width).slice(0, 4), lineHeight = size * 1.05;
-  return { x: 160, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
+  return { x: 94.5, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
 }
 
 function priorityIcon(priority) {
   const p = String(priority ?? '').trim().toLowerCase();
-  if (p === 'blocker' || p === 'highest') return '<g transform="translate(18 88)" fill="none" stroke="#E34935" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L6 1 L12 7"/><path d="M0 12 L6 6 L12 12"/></g>';
-  if (p === 'high') return '<g transform="translate(18 90)" fill="none" stroke="#E34935" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 8 L6 2 L12 8"/></g>';
-  if (p === 'medium') return '<g transform="translate(18 92)" fill="none" stroke="#F5A700" stroke-width="2.2" stroke-linecap="round"><path d="M0 0 H12"/><path d="M0 5 H12"/></g>';
-  if (p === 'low') return '<g transform="translate(18 91)" fill="none" stroke="#1267E5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L6 8 L12 2"/></g>';
-  if (p === 'trivial' || p === 'lowest') return '<g transform="translate(18 88)" fill="none" stroke="#1267E5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 1 L6 7 L12 1"/><path d="M0 6 L6 12 L12 6"/></g>';
-  return '<g transform="translate(18 95)" fill="none" stroke="#6B778C" stroke-width="2.4" stroke-linecap="round"><path d="M0 0 H12"/></g>';
+  if (p === 'blocker' || p === 'highest') return '<g transform="translate(9 93)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 6 L5 1 L10 6"/><path d="M0 10 L5 5 L10 10"/></g>';
+  if (p === 'high') return '<g transform="translate(9 95)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L5 2 L10 7"/></g>';
+  if (p === 'medium') return '<g transform="translate(9 97)" fill="none" stroke="#F5A700" stroke-width="1.7" stroke-linecap="round"><path d="M0 0 H10"/><path d="M0 4 H10"/></g>';
+  if (p === 'low') return '<g transform="translate(9 96)" fill="none" stroke="#1267E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L5 7 L10 2"/></g>';
+  if (p === 'trivial' || p === 'lowest') return '<g transform="translate(9 93)" fill="none" stroke="#1267E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 1 L5 6 L10 1"/><path d="M0 5 L5 10 L10 5"/></g>';
+  return '<g transform="translate(9 99)" fill="none" stroke="#6B778C" stroke-width="1.8" stroke-linecap="round"><path d="M0 0 H10"/></g>';
 }
 
 export function cardSvg(card) {
   const layout = titleLayout(card.summary);
-  const title = [`<text x="${layout.x}" y="${layout.y}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${layout.size}" font-weight="400" fill="#1A1A1A">`, ...layout.lines.map((line, i) => i ? `<tspan x="${layout.x}" dy="${layout.lineHeight}">${esc(line)}</tspan>` : `<tspan x="${layout.x}">${esc(line)}</tspan>`), '</text>'].join('');
+  const title = [\`<text x="${layout.x}" y="${layout.y}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${layout.size}" font-weight="400" fill="#1A1A1A">\`, ...layout.lines.map((line, i) => i ? \`<tspan x="${layout.x}" dy="${layout.lineHeight}">${esc(line)}</tspan>\` : \`<tspan x="${layout.x}">${esc(line)}</tspan>\`), '</text>'].join('');
   const color = WORK_TYPE_COLORS[String(card.workType ?? '').trim().toLowerCase()] || '#E8E8E8';
-  return ['<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">', `<rect x="2" y="2" width="316" height="116" rx="6" fill="${color}" stroke="#8A8A8A" stroke-width="1.0"/>`, `<text x="12" y="18" font-family="Open Sans, Arial, sans-serif" font-size="10" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>`, '<text x="308" y="18" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="10" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), `<text x="40" y="101" font-family="Open Sans, Arial, sans-serif" font-size="10" fill="#1A1A1A">${esc(card.priority)}</text>`, `<text x="300" y="101" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="10" fill="#1A1A1A">${esc(card.assignee)}</text>`, '</svg>'].join('');
+  const priority = fit(card.priority, 8, 62) || 'None';
+  const assignee = fit(card.assignee, 8, 78) || 'Unassigned';
+  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="123.12" viewBox="0 0 189 123.12">', '<rect x="1" y="1" width="187" height="121.12" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', \`<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>\`, '<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), \`<text x="25" y="108" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(priority)}</text>\`, \`<text x="181" y="108" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(assignee)}</text>\`, '</svg>'].join('');
 }
 
 export async function createCard(env, issueKey, position, parentId = null) {
