@@ -113,26 +113,25 @@ function overlap(centerX, width, column) {
   return Math.max(0, Math.min(right, column.right) - Math.max(left, column.left)) / width;
 }
 
-const COLLISION_OVERLAP_LIMIT = 0.95;
+const COLLISION_OVERLAP_LIMIT = 0.4;
 const COLLISION_STEP = 12;
-const COLLISION_OFFSETS = [
-  { x: 0, y: 0 },
-  { x: COLLISION_STEP, y: COLLISION_STEP },
-  { x: -COLLISION_STEP, y: COLLISION_STEP },
-  { x: COLLISION_STEP, y: -COLLISION_STEP },
-  { x: -COLLISION_STEP, y: -COLLISION_STEP },
-  { x: 0, y: COLLISION_STEP },
-  { x: 0, y: -COLLISION_STEP },
+const COLLISION_DIRECTIONS = [
+  { x: 1, y: 1 },
+  { x: -1, y: 1 },
+  { x: 1, y: -1 },
+  { x: -1, y: -1 },
+  { x: 0, y: 1 },
+  { x: 0, y: -1 },
 ];
 
-function nearlyFullyOverlaps(a, b) {
+function cardOverlapRatio(a, b) {
   const aLeft = a.x - a.width / 2, aRight = a.x + a.width / 2;
   const aTop = a.y - a.height / 2, aBottom = a.y + a.height / 2;
   const bLeft = b.x - b.width / 2, bRight = b.x + b.width / 2;
   const bTop = b.y - b.height / 2, bBottom = b.y + b.height / 2;
   const intersection = Math.max(0, Math.min(aRight, bRight) - Math.max(aLeft, bLeft))
     * Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
-  return intersection / (a.width * a.height) > COLLISION_OVERLAP_LIMIT;
+  return intersection / (a.width * a.height);
 }
 
 async function collisionFreePosition(env, item, base, target, mode) {
@@ -171,12 +170,18 @@ async function collisionFreePosition(env, item, base, target, mode) {
     const localY = mode === 'parent-local' ? candidate.y : candidate.y - base.frameTop;
     return insideBoard(cfg.layout, localX, localY) && overlap(localX, width, target) >= cfg.overlapThreshold;
   };
-  const collides = candidate => others.some(other => nearlyFullyOverlaps({ x: candidate.x, y: candidate.y, width, height }, other));
+  const collides = candidate => others.some(other => cardOverlapRatio({ x: candidate.x, y: candidate.y, width, height }, other) > COLLISION_OVERLAP_LIMIT);
   const normal = { x: base.x, y: base.y };
   if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
-  for (const offset of COLLISION_OFFSETS.slice(1)) {
-    const candidate = { x: base.x + offset.x, y: base.y + offset.y };
-    if (isValid(candidate) && !collides(candidate)) return { ...base, ...candidate, adjusted: true, offset };
+
+  // Search outward in 12-unit rings. The order starts down/right, then tries
+  // the opposite directions when the target column boundary is reached.
+  for (let radius = 1; radius <= 24; radius += 1) {
+    for (const direction of COLLISION_DIRECTIONS) {
+      const offset = { x: direction.x * COLLISION_STEP * radius, y: direction.y * COLLISION_STEP * radius };
+      const candidate = { x: base.x + offset.x, y: base.y + offset.y };
+      if (isValid(candidate) && !collides(candidate)) return { ...base, ...candidate, adjusted: true, offset };
+    }
   }
   return { ...base, adjusted: false };
 }
