@@ -48,10 +48,19 @@ export async function replaceSvg(env, itemId, issueKey, svg) {
   const form = new FormData();
   form.append('resource', new Blob([new TextEncoder().encode(svg)], { type: 'image/svg+xml' }), `${issueKey}.svg`);
   form.append('data', JSON.stringify({ title: `CUSTOM_JIRA_CARD:${issueKey}` }));
-  const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`, { method: 'PATCH', headers: miroHeaders(env), body: form });
-  return response.ok ? { ok: true, refreshed: true } : { ok: false, refreshed: false, stage: 'refresh-custom-card', miroStatus: response.status, error: await response.text() };
-}
+  const url = `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`;
+  const response = await fetch(url, { method: 'PATCH', headers: miroHeaders(env), body: form });
+  if (!response.ok) return { ok: false, refreshed: false, stage: 'refresh-custom-card', miroStatus: response.status, error: await response.text() };
 
+  const resized = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width, height: config(env).card.height } }),
+  });
+  return resized.ok
+    ? { ok: true, refreshed: true, resized: true }
+    : { ok: false, refreshed: false, stage: 'resize-custom-card', miroStatus: resized.status, error: await resized.text() };
+}
 export async function listItems(env, params = {}) {
   const result = [];
   let cursor = '';
