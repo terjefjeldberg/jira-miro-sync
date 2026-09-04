@@ -162,7 +162,15 @@ async function jiraWebhook(request, env) {
     }
   }
 
-  if (directPending) return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
+  if (directPending) {
+    // A direct Miro conversion creates the Jira issue in Todo. Suppress only
+    // that initial webhook; a later manual status change must still move Miro.
+    const isInitialStatus = ['todo', 'to do'].includes(String(status).trim().toLowerCase());
+    await env.CARD_MAP.delete(directPendingKey(issueKey));
+    if (isInitialStatus) {
+      return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'kv-marker' });
+    }
+  }
 
   if (!customId) {
     const incomingCreate = await createIncomingCard(env, issueKey);
