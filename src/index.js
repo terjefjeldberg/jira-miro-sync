@@ -137,27 +137,32 @@ async function jiraWebhook(request, env) {
   ]);
 
   if (!customId && !directPending) {
-    await new Promise(resolve => setTimeout(resolve, 750));
-    [customId, directPending] = await Promise.all([
-      env.CARD_MAP.get(customMapKey(issueKey)),
-      env.CARD_MAP.get(directPendingKey(issueKey)),
-    ]);
+    // Direct Miro conversions can race the Jira creation webhook. Give the
+    // client and KV mapping a few chances to arrive before creating fallback
+    // cards in Incoming/Todo.
+    for (let attempt = 0; attempt < 4 && !customId && !directPending; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 750));
+      [customId, directPending] = await Promise.all([
+        env.CARD_MAP.get(customMapKey(issueKey)),
+        env.CARD_MAP.get(directPendingKey(issueKey)),
+      ]);
 
-    if (!customId && !directPending) {
-      const recovered = await recoverCustomMapping(env, issueKey);
-      if (!recovered.ok) {
-        return json({ ok: false, moved: false, issueKey, status, stage: 'recover-custom-mapping', miroStatus: recovered.status, error: recovered.error }, 502);
+      if (!customId && !directPending) {
+        const recovered = await recoverCustomMapping(env, issueKey);
+        if (!recovered.ok) {
+          return json({ ok: false, moved: false, issueKey, status, stage: 'recover-custom-mapping', miroStatus: recovered.status, error: recovered.error }, 502);
+        }
+        if (recovered.recovered) {
+          customId = recovered.itemId;
+          mappingRecoveredFromBoard = true;
+        }
       }
-      if (recovered.recovered) {
-        customId = recovered.itemId;
-        mappingRecoveredFromBoard = true;
-      }
-    }
 
-    if (!customId && !directPending) {
-      live = await getCardData(env, issueKey).catch(() => null);
-      if (live?.ok && live.originalMiroCreated) {
-        return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
+      if (!customId && !directPending) {
+        live = await getCardData(env, issueKey).catch(() => null);
+        if (live?.ok && live.originalMiroCreated) {
+          return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
+        }
       }
     }
   }
