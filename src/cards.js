@@ -47,7 +47,7 @@ function wrap(text, size, maxWidth) {
       if (part) parts.push(part);
     }
     for (const part of parts) {
-      const candidate = current ? \`${current} \`${part}\` : part;
+      const candidate = current ? `${current} ${part}` : part;
       if (width(candidate, size) <= maxWidth) current = candidate;
       else { if (current) lines.push(current); current = part; }
     }
@@ -79,11 +79,11 @@ function priorityIcon(priority) {
 
 export function cardSvg(card) {
   const layout = titleLayout(card.summary);
-  const title = [\`<text x="${layout.x}" y="${layout.y}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${layout.size}" font-weight="400" fill="#1A1A1A">\`, ...layout.lines.map((line, i) => i ? \`<tspan x="${layout.x}" dy="${layout.lineHeight}">${esc(line)}</tspan>\` : \`<tspan x="${layout.x}">${esc(line)}</tspan>\`), '</text>'].join('');
+  const title = [`<text x="${layout.x}" y="${layout.y}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${layout.size}" font-weight="400" fill="#1A1A1A">`, ...layout.lines.map((line, i) => i ? `<tspan x="${layout.x}" dy="${layout.lineHeight}">${esc(line)}</tspan>` : `<tspan x="${layout.x}">${esc(line)}</tspan>`), '</text>'].join('');
   const color = WORK_TYPE_COLORS[String(card.workType ?? '').trim().toLowerCase()] || '#E8E8E8';
   const priority = fit(card.priority, 8, 62) || 'None';
   const assignee = fit(card.assignee, 8, 78) || 'Unassigned';
-  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="123.12" viewBox="0 0 189 123.12">', '<rect x="1" y="1" width="187" height="121.12" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', \`<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>\`, '<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), \`<text x="25" y="108" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(priority)}</text>\`, \`<text x="181" y="108" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(assignee)}</text>\`, '</svg>'].join('');
+  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="123.12" viewBox="0 0 189 123.12">', '<rect x="1" y="1" width="187" height="121.12" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>`, '<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), `<text x="25" y="108" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(priority)}</text>`, `<text x="181" y="108" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(assignee)}</text>`, '</svg>'].join('');
 }
 
 export async function createCard(env, issueKey, position, parentId = null) {
