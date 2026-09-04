@@ -57,24 +57,24 @@ function wrap(text, size, maxWidth) {
 }
 
 function titleLayout(text) {
-  const box = { x: 10, y: 24, width: 169, height: 62 };
-  for (let size = 28; size >= 9; size -= 1) {
+  const box = { x: 10, y: 20, width: 169, height: 52 };
+  for (let size = 24; size >= 8; size -= 1) {
     const lines = wrap(text, size, box.width);
     const lineHeight = size * 1.05;
     if (lines.length <= 4 && lines.length * lineHeight <= box.height) return { x: 94.5, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
   }
-  const size = 9, lines = wrap(text, size, box.width).slice(0, 4), lineHeight = size * 1.05;
+  const size = 8, lines = wrap(text, size, box.width).slice(0, 4), lineHeight = size * 1.05;
   return { x: 94.5, y: box.y + (box.height - lines.length * lineHeight) / 2 + size * 0.82, size, lineHeight, lines };
 }
 
 function priorityIcon(priority) {
   const p = String(priority ?? '').trim().toLowerCase();
-  if (p === 'blocker' || p === 'highest') return '<g transform="translate(9 93)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 6 L5 1 L10 6"/><path d="M0 10 L5 5 L10 10"/></g>';
-  if (p === 'high') return '<g transform="translate(9 95)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L5 2 L10 7"/></g>';
-  if (p === 'medium') return '<g transform="translate(9 97)" fill="none" stroke="#F5A700" stroke-width="1.7" stroke-linecap="round"><path d="M0 0 H10"/><path d="M0 4 H10"/></g>';
-  if (p === 'low') return '<g transform="translate(9 96)" fill="none" stroke="#1267E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L5 7 L10 2"/></g>';
+  if (p === 'blocker' || p === 'highest') return '<g transform="translate(9 75)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 6 L5 1 L10 6"/><path d="M0 10 L5 5 L10 10"/></g>';
+  if (p === 'high') return '<g transform="translate(9 77)" fill="none" stroke="#E34935" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 7 L5 2 L10 7"/></g>';
+  if (p === 'medium') return '<g transform="translate(9 79)" fill="none" stroke="#F5A700" stroke-width="1.7" stroke-linecap="round"><path d="M0 0 H10"/><path d="M0 4 H10"/></g>';
+  if (p === 'low') return '<g transform="translate(9 78)" fill="none" stroke="#1267E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 2 L5 7 L10 2"/></g>';
   if (p === 'trivial' || p === 'lowest') return '<g transform="translate(9 93)" fill="none" stroke="#1267E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M0 1 L5 6 L10 1"/><path d="M0 5 L5 10 L10 5"/></g>';
-  return '<g transform="translate(9 99)" fill="none" stroke="#6B778C" stroke-width="1.8" stroke-linecap="round"><path d="M0 0 H10"/></g>';
+  return '<g transform="translate(9 81)" fill="none" stroke="#6B778C" stroke-width="1.8" stroke-linecap="round"><path d="M0 0 H10"/></g>';
 }
 
 export function cardSvg(card) {
@@ -83,7 +83,7 @@ export function cardSvg(card) {
   const color = WORK_TYPE_COLORS[String(card.workType ?? '').trim().toLowerCase()] || '#E8E8E8';
   const priority = fit(card.priority, 8, 62) || 'None';
   const assignee = fit(card.assignee, 8, 78) || 'Unassigned';
-  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="115" viewBox="0 0 189 115">', '<rect x="1" y="1" width="187" height="113" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>`, '<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), `<text x="25" y="108" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(priority)}</text>`, `<text x="181" y="108" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(assignee)}</text>`, '</svg>'].join('');
+  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="115" viewBox="0 0 189 115">', '<rect x="1" y="1" width="187" height="113" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="#1A1A1A">${esc(card.issueKey)}</text>`, '<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#0A66C2">Jira ↗</text>', title, priorityIcon(card.priority), `<text x="25" y="89" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(priority)}</text>`, `<text x="181" y="108" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="#1A1A1A">${esc(assignee)}</text>`, '</svg>'].join('');
 }
 
 export async function createCard(env, issueKey, position, parentId = null) {
