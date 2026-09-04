@@ -159,7 +159,7 @@ function token(secret) {
   assert.equal(body.mappingRecoveredFromBoard, true);
   assert.equal(body.moved, true);
   assert.equal(await kv.get(customMapKey('SN-4')), 'img-4');
-  assert.deepEqual(finalWrites, ['refresh', 'move']);
+  assert.deepEqual(finalWrites, ['refresh', 'refresh', 'move']);
   assert.deepEqual(moveBody.position, { x: 2923.455009676509, y: 1000, origin: 'center' });
   globalThis.fetch = oldFetch;
 }
