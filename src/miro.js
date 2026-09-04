@@ -113,7 +113,7 @@ function overlap(centerX, width, column) {
   return Math.max(0, Math.min(right, column.right) - Math.max(left, column.left)) / width;
 }
 
-const COLLISION_OVERLAP_LIMIT = 0.4;
+const COLLISION_OVERLAP_LIMIT = 0.95;
 const COLLISION_STEP = 12;
 const COLLISION_DIRECTIONS = [
   { x: 1, y: 1 },
