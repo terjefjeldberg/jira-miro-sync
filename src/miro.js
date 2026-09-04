@@ -143,10 +143,14 @@ async function collisionFreePosition(env, item, base, target, mode) {
 
   const others = [];
   if (mode === 'parent-local') {
-    const listed = await listItems(env, { type: 'image', parent_item_id: String(item?.parent?.id ?? item?.parentId ?? '') });
+    const parentId = String(item?.parent?.id ?? item?.parentId ?? '');
+    // Miro's REST API can ignore parent_item_id when combined with type.
+    // Fetch images first and filter by parent locally so collisions are reliable.
+    const listed = await listItems(env, { type: 'image' });
     if (!listed.ok) return { ...base, adjusted: false };
     for (const other of listed.items) {
-      if (String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
+      const otherParentId = String(other?.parent?.id ?? other?.parentId ?? '');
+      if (otherParentId !== parentId || String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
       const x = Number(other?.position?.x ?? other?.x), y = Number(other?.position?.y ?? other?.y);
       const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
       if ([x, y, w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x, y, width: w, height: h });
