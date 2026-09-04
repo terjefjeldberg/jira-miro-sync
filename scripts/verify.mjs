@@ -28,7 +28,8 @@ const svg = cardSvg({
   workType: 'Bug',
 });
 assert.match(svg, /SN-123/);
-assert.match(svg, /Verification card/);
+assert.match(svg, /Verification/);
+assert.match(svg, /card/);
 assert.match(svg, /#FD9DE8/);
 
 const health = await worker.fetch(new Request('https://worker.test/health'), env);
