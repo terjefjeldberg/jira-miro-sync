@@ -176,10 +176,11 @@ async function collisionFreePosition(env, item, base, target, mode) {
   const normal = { x: base.x, y: base.y };
   if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
 
-  // Search outward in 12-unit rings. The order starts down/right, then tries
-  // the opposite directions when the target column boundary is reached.
-  for (let radius = 1; radius <= 24; radius += 1) {
-    for (const direction of COLLISION_DIRECTIONS) {
+  // Search one direction at a time. This keeps a stack moving consistently
+  // down/right until the 60% status boundary is reached, then tries the
+  // opposite XY directions instead of switching sideways after one collision.
+  for (const direction of COLLISION_DIRECTIONS) {
+    for (let radius = 1; radius <= 24; radius += 1) {
       const offset = { x: direction.x * COLLISION_STEP * radius, y: direction.y * COLLISION_STEP * radius };
       const candidate = { x: base.x + offset.x, y: base.y + offset.y };
       if (isValid(candidate) && !collides(candidate)) return { ...base, ...candidate, adjusted: true, offset };
