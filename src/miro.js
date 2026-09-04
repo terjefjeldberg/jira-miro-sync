@@ -162,8 +162,11 @@ async function collisionFreePosition(env, item, base, target, mode) {
     }
   }
 
-  const isValid = candidate => insideBoard(cfg.layout, candidate.x, candidate.y)
-    && overlap(mode === 'parent-local' ? candidate.x : candidate.x - base.frameLeft, width, target) >= cfg.overlapThreshold;
+  const isValid = candidate => {
+    const localX = mode === 'parent-local' ? candidate.x : candidate.x - base.frameLeft;
+    const localY = mode === 'parent-local' ? candidate.y : candidate.y - base.frameTop;
+    return insideBoard(cfg.layout, localX, localY) && overlap(localX, width, target) >= cfg.overlapThreshold;
+  };
   const collides = candidate => others.some(other => nearlyFullyOverlaps({ x: candidate.x, y: candidate.y, width, height }, other));
   const normal = { x: base.x, y: base.y };
   if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
@@ -221,7 +224,7 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   if (!frame) return { ok: true, mapped: true, moved: false, parked: true };
   if (overlap(frame.localX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
   const targetCanvasX = frame.left + target.targetX;
-  const placement = await collisionFreePosition(env, item, { x: targetCanvasX, y: canvas.y, frameLeft: frame.left }, target, 'canvas');
+  const placement = await collisionFreePosition(env, item, { x: targetCanvasX, y: canvas.y, frameLeft: frame.left, frameTop: frame.top }, target, 'canvas');
   const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
   return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: placement.x, yPreserved: placement.y, movementMode: 'canvas', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
 }
