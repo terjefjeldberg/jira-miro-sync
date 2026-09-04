@@ -149,7 +149,9 @@ async function collisionFreePosition(env, item, base, target, mode) {
     if (!listed.ok) return { ...base, adjusted: false };
     for (const other of listed.items) {
       const otherParentId = String(other?.parent?.id ?? other?.parentId ?? '');
-      if (otherParentId !== parentId || String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
+      // Miro may omit parent metadata on listed images. Only exclude a card
+      // when both parent IDs are known and explicitly different.
+      if ((otherParentId && parentId && otherParentId !== parentId) || String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
       const x = Number(other?.position?.x ?? other?.x), y = Number(other?.position?.y ?? other?.y);
       const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
       if ([x, y, w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x, y, width: w, height: h });
