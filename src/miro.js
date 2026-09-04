@@ -113,6 +113,67 @@ function overlap(centerX, width, column) {
   return Math.max(0, Math.min(right, column.right) - Math.max(left, column.left)) / width;
 }
 
+const COLLISION_OVERLAP_LIMIT = 0.95;
+const COLLISION_STEP = 12;
+const COLLISION_OFFSETS = [
+  { x: 0, y: 0 },
+  { x: COLLISION_STEP, y: COLLISION_STEP },
+  { x: -COLLISION_STEP, y: COLLISION_STEP },
+  { x: COLLISION_STEP, y: -COLLISION_STEP },
+  { x: -COLLISION_STEP, y: -COLLISION_STEP },
+  { x: 0, y: COLLISION_STEP },
+  { x: 0, y: -COLLISION_STEP },
+];
+
+function nearlyFullyOverlaps(a, b) {
+  const aLeft = a.x - a.width / 2, aRight = a.x + a.width / 2;
+  const aTop = a.y - a.height / 2, aBottom = a.y + a.height / 2;
+  const bLeft = b.x - b.width / 2, bRight = b.x + b.width / 2;
+  const bTop = b.y - b.height / 2, bBottom = b.y + b.height / 2;
+  const intersection = Math.max(0, Math.min(aRight, bRight) - Math.max(aLeft, bLeft))
+    * Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+  return intersection / (a.width * a.height) > COLLISION_OVERLAP_LIMIT;
+}
+
+async function collisionFreePosition(env, item, base, target, mode) {
+  const cfg = config(env);
+  const width = Number(item?.geometry?.width ?? item?.width);
+  const height = Number(item?.geometry?.height ?? item?.height);
+  if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0) return { ...base, adjusted: false };
+
+  const others = [];
+  if (mode === 'parent-local') {
+    const listed = await listItems(env, { type: 'image', parent_item_id: String(item?.parent?.id ?? item?.parentId ?? '') });
+    if (!listed.ok) return { ...base, adjusted: false };
+    for (const other of listed.items) {
+      if (String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
+      const x = Number(other?.position?.x ?? other?.x), y = Number(other?.position?.y ?? other?.y);
+      const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
+      if ([x, y, w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x, y, width: w, height: h });
+    }
+  } else {
+    const listed = await listItems(env, { type: 'image' });
+    if (!listed.ok) return { ...base, adjusted: false };
+    for (const other of listed.items) {
+      if (String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
+      const position = await resolveCanvasPosition(env, other);
+      const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
+      if (position && [w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x: position.x, y: position.y, width: w, height: h });
+    }
+  }
+
+  const isValid = candidate => insideBoard(cfg.layout, candidate.x, candidate.y)
+    && overlap(mode === 'parent-local' ? candidate.x : candidate.x - base.frameLeft, width, target) >= cfg.overlapThreshold;
+  const collides = candidate => others.some(other => nearlyFullyOverlaps({ x: candidate.x, y: candidate.y, width, height }, other));
+  const normal = { x: base.x, y: base.y };
+  if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
+  for (const offset of COLLISION_OFFSETS.slice(1)) {
+    const candidate = { x: base.x + offset.x, y: base.y + offset.y };
+    if (isValid(candidate) && !collides(candidate)) return { ...base, ...candidate, adjusted: true, offset };
+  }
+  return { ...base, adjusted: false };
+}
+
 async function findWorkflowFrame(env, canvasX, canvasY) {
   const cfg = config(env);
   const frames = await listItems(env, { type: 'frame' });
@@ -148,8 +209,9 @@ export async function moveMappedItemToStatus(env, itemId, status) {
     const parentWidth = Number(parent?.geometry?.width), parentHeight = Number(parent?.geometry?.height);
     if (parentRead.ok && parentRead.found && Number.isFinite(parentWidth) && Number.isFinite(parentHeight) && parentWidth >= cfg.layout.board.right && parentHeight >= cfg.layout.board.bottom && insideBoard(cfg.layout, rawX, rawY)) {
       if (overlap(rawX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
-      const response = await patchItem(env, itemId, { position: { x: target.targetX, y: rawY, origin: 'center' } });
-      return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: rawX, toX: target.targetX, yPreserved: rawY, movementMode: 'parent-local' } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
+      const placement = await collisionFreePosition(env, item, { x: target.targetX, y: rawY }, target, 'parent-local');
+      const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
+      return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: rawX, toX: placement.x, yPreserved: placement.y, movementMode: 'parent-local', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
     }
   }
 
@@ -159,8 +221,9 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   if (!frame) return { ok: true, mapped: true, moved: false, parked: true };
   if (overlap(frame.localX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
   const targetCanvasX = frame.left + target.targetX;
-  const response = await patchItem(env, itemId, { position: { x: targetCanvasX, y: canvas.y, origin: 'center' } });
-  return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: targetCanvasX, yPreserved: canvas.y, movementMode: 'canvas' } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
+  const placement = await collisionFreePosition(env, item, { x: targetCanvasX, y: canvas.y, frameLeft: frame.left }, target, 'canvas');
+  const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
+  return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: placement.x, yPreserved: placement.y, movementMode: 'canvas', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
 }
 
 export async function registerMappings(env, entries) {
