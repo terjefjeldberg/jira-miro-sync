@@ -255,13 +255,39 @@ export function issueKeyFromImage(item) {
 
 export async function incomingPosition(env) {
   const cfg = config(env);
-  const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/frames/${encodeURIComponent(cfg.incomingFrameId)}`, { headers: miroHeaders(env) });
-  if (!response.ok) return { ok: false, status: 502, stage: 'incoming-read-frame', miroStatus: response.status, error: await response.text() };
+  const frameUrl = `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/frames/${encodeURIComponent(cfg.incomingFrameId)}`;
+  let response = null;
+  let lastError = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetch(frameUrl, { headers: miroHeaders(env) });
+    if (response.ok) break;
+    lastError = await response.text();
+    if (response.status < 500 || attempt === 2) break;
+    await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+
+  // Miro occasionally returns a transient 5xx for an existing frame. Use a
+  // safe local position inside the known Incoming frame instead of failing the
+  // Jira webhook; the parent frame ID is still valid for the image upload.
+  if (!response?.ok) {
+    if (response?.status >= 500) {
+      const i = cfg.incoming, c = cfg.card;
+      return { ok: true, x: i.marginX + c.width / 2, y: i.marginY + c.height / 2, parentId: cfg.incomingFrameId, fallback: true, fallbackReason: 'incoming-frame-read-5xx' };
+    }
+    return { ok: false, status: 502, stage: 'incoming-read-frame', miroStatus: response?.status || 502, error: lastError };
+  }
+
   const frame = await response.json();
   const width = Number(frame?.geometry?.width), height = Number(frame?.geometry?.height);
   if (!Number.isFinite(width) || !Number.isFinite(height)) return { ok: false, status: 502, stage: 'incoming-frame-geometry', reason: 'Incoming frame has invalid geometry' };
   const children = await listItems(env, { parent_item_id: cfg.incomingFrameId });
-  if (!children.ok) return { ok: false, status: 502, stage: 'incoming-list-children', error: children.error };
+  if (!children.ok) {
+    if (children.status >= 500) {
+      const i = cfg.incoming, c = cfg.card;
+      return { ok: true, x: i.marginX + c.width / 2, y: i.marginY + c.height / 2, parentId: cfg.incomingFrameId, fallback: true, fallbackReason: 'incoming-children-list-5xx' };
+    }
+    return { ...children, status: 502, stage: 'incoming-list-children' };
+  }
   const custom = children.items.filter(item => issueKeyFromImage(item));
   const i = cfg.incoming, c = cfg.card;
   const columns = Math.max(1, Math.floor((Math.max(c.width, width - i.marginX * 2) + i.gapX) / (c.width + i.gapX)));
