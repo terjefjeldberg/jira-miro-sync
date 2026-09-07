@@ -100,7 +100,7 @@ function textValue(field, text) {
 export async function createIssueFromSticky(env, summary, workType) {
   const cfg = config(env);
   summary = String(summary ?? '').replace(/\s+/g, ' ').trim();
-  const allowed = new Set(['Bug', 'Improvement', 'Spike', 'New Feature', 'Hotfix candidate', 'Task/config/doc/test']);
+  const allowed = new Set(['Bug', 'Improvement', 'Spike', 'New Feature', 'Task/config/doc/test']);
   if (!summary) return { ok: false, status: 400, reason: 'Sticky note has no text' };
   if (summary.length > 255) return { ok: false, status: 400, reason: 'Sticky text is too long for Jira summary', maxLength: 255 };
   if (!allowed.has(workType)) return { ok: false, status: 400, reason: 'Unapproved work type', workType };
