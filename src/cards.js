@@ -81,7 +81,8 @@ export function cardSvg(card) {
   const layout = titleLayout(card.summary);
   const title = [`<text x="${layout.x}" y="${layout.y}" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="${layout.size}" font-weight="400" fill="#1A1A1A">`, ...layout.lines.map((line, i) => i ? `<tspan x="${layout.x}" dy="${layout.lineHeight}">${esc(line)}</tspan>` : `<tspan x="${layout.x}">${esc(line)}</tspan>`), '</text>'].join('');
   const isBlocker = String(card.priority ?? '').trim().toLowerCase() === 'blocker';
-  const color = isBlocker ? '#000000' : (WORK_TYPE_COLORS[String(card.workType ?? '').trim().toLowerCase()] || '#E8E8E8');
+  const isHotfixCandidate = Boolean(card.hotfixCandidate);
+  const color = isBlocker ? '#000000' : isHotfixCandidate ? '#FFB677' : (WORK_TYPE_COLORS[String(card.workType ?? '').trim().toLowerCase()] || '#E8E8E8');
   const textColor = isBlocker ? '#FFFFFF' : '#1A1A1A';
   const linkColor = isBlocker ? '#9CCBFF' : '#0A66C2';
   const priority = fit(card.priority, 8, 62) || 'None';
@@ -164,5 +165,5 @@ export async function refreshCard(env, issueKey) {
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
   const result = await replaceSvg(env, itemId, issueKey, cardSvg(data));
   if (!result.ok) return { ...result, mapped: true, itemId };
-  return { ok: true, refreshed: true, mapped: true, itemId, fields: { summary: data.summary, priority: data.priority, assignee: data.assignee, workType: data.workType } };
+  return { ok: true, refreshed: true, mapped: true, itemId, fields: { summary: data.summary, priority: data.priority, assignee: data.assignee, workType: data.workType, hotfixCandidate: data.hotfixCandidate } };
 }
