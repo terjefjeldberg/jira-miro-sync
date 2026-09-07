@@ -23,9 +23,17 @@ export async function getIssue(env, issueKey, fields) {
   return { ok: true, issue: await response.json() };
 }
 
+function isHotfixCandidate(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values.some(item => {
+    const option = typeof item === 'string' ? item : item?.value ?? item?.name ?? item?.label ?? '';
+    return String(option).trim().toLowerCase() === 'hotfix';
+  });
+}
+
 export async function getCardData(env, issueKey) {
   const { fields } = config(env);
-  const result = await getIssue(env, issueKey, ['summary', 'priority', 'assignee', 'issuetype', 'status', fields.originalMiroCreated]);
+  const result = await getIssue(env, issueKey, ['summary', 'priority', 'assignee', 'issuetype', 'status', fields.originalMiroCreated, fields.hotfixCandidate]);
   if (!result.ok) return result;
   const f = result.issue?.fields || {};
   return {
@@ -36,6 +44,7 @@ export async function getCardData(env, issueKey) {
     assignee: String(f.assignee?.displayName ?? 'Unassigned'),
     workType: String(f.issuetype?.name ?? 'Unknown'),
     status: String(f.status?.name ?? ''),
+    hotfixCandidate: isHotfixCandidate(f[fields.hotfixCandidate]),
     originalMiroCreated: f[fields.originalMiroCreated] ?? null,
   };
 }
