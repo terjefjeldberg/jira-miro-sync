@@ -26,6 +26,9 @@ await miro.board.ui.on('icon:click',async()=>{try{await register();if(await miro
 await miro.board.ui.on('items:create',itemsCreated);
 await miro.board.ui.on('experimental:items:update',itemsUpdated);
 await register();
+// Server-created image items do not always emit items:create in the open app.
+// Keep a lightweight link-only scan so Jira links appear without a manual refresh.
+setInterval(()=>register().catch(error=>console.error('Link registration scan failed',error)),5000);
 console.log('Jira/Miro SVG custom-card sync app ready');
 })();`;
   return text(script, 'application/javascript; charset=utf-8');
