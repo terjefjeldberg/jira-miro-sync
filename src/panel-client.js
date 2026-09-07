@@ -5,7 +5,7 @@ export function renderPanelClient(env) {
   const cfg = config(env);
   const script = String.raw`(function(){
 const META='rendraStickyJiraConversionV1',layout=${JSON.stringify(cfg.layout)},threshold=${cfg.overlapThreshold};
-const colorMap={light_pink:'Bug',pink:'Bug',violet:'Bug',light_blue:'Improvement',blue:'Improvement',dark_blue:'Improvement',gray:'Improvement',light_yellow:'Spike',yellow:'Spike',light_green:'New Feature',green:'New Feature',dark_green:'New Feature',orange:'Hotfix candidate',red:'Hotfix candidate',cyan:'Task/config/doc/test'};
+const colorMap={light_pink:'Bug',pink:'Bug',violet:'Bug',light_blue:'Improvement',blue:'Improvement',dark_blue:'Improvement',gray:'Improvement',light_yellow:'Spike',yellow:'Spike',light_green:'New Feature',green:'New Feature',dark_green:'New Feature',orange:'Bug',red:'Bug',cyan:'Task/config/doc/test'};
 const button=document.getElementById('convertButton'),statusEl=document.getElementById('status');
 const status=(m,t='info')=>{statusEl.className=t;statusEl.textContent=m};
 const plain=v=>{const d=document.createElement('div');d.innerHTML=String(v||'');return String(d.textContent||'').replace(/\s+/g,' ').trim()};
