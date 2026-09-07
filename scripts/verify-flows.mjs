@@ -127,7 +127,7 @@ function token(secret) {
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
     if (value.includes('/issue/SN-4?fields=')) {
-      return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11207: null } });
+      return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11207: '2026-09-07T10:00:00.000+0000' } });
     }
     if (value.includes('/items?') && value.includes('type=image')) {
       return json({ data: [{ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } }] });
