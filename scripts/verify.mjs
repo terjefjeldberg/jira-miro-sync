@@ -32,6 +32,11 @@ assert.match(svg, /Verification/);
 assert.match(svg, /card/);
 assert.match(svg, /#FD9DE8/);
 
+const hotfixSvg = cardSvg({
+  issueKey: 'SN-124', summary: 'Hotfix bug', priority: 'High', assignee: 'Test User', workType: 'Bug', hotfixCandidate: true,
+});
+assert.match(hotfixSvg, /#FFB677/);
+
 const health = await worker.fetch(new Request('https://worker.test/health'), env);
 assert.equal(health.status, 200);
 const healthBody = await health.json();
