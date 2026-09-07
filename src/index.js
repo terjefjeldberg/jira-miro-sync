@@ -147,19 +147,18 @@ async function jiraWebhook(request, env) {
       ]);
     }
 
-    if (!customId && !directPending) {
+    // A normal Jira-created issue has no original Miro timestamp and should
+    // go directly to Incoming. Only sticky-originated issues need the
+    // expensive board-wide mapping recovery scan.
+    if (!customId && !directPending && live?.originalMiroCreated) {
       const recovered = await recoverCustomMapping(env, issueKey);
       if (recovered.ok && recovered.recovered) {
         customId = recovered.itemId;
         mappingRecoveredFromBoard = true;
       }
       // A transient Miro 5xx must not prevent normal Incoming creation.
-      // If recovery fails, createIncomingCard below remains the fallback.
-    }
-
-    if (!customId && !directPending) {
-      live = await getCardData(env, issueKey).catch(() => null);
-      if (live?.ok && live.originalMiroCreated) {
+      // If recovery fails, suppress only the sticky-originated creation.
+      if (!customId) {
         return json({ ok: true, moved: false, issueKey, status, conversionDirectCreatePending: true, suppressionSource: 'original-miro-created' });
       }
     }
