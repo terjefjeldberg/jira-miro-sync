@@ -26,8 +26,12 @@ export async function getIssue(env, issueKey, fields) {
 function isHotfixCandidate(value) {
   const values = Array.isArray(value) ? value : [value];
   return values.some(item => {
-    const option = typeof item === 'string' ? item : item?.value ?? item?.name ?? item?.label ?? '';
-    return String(option).trim().toLowerCase() === 'hotfix';
+    if (item === true) return true;
+    const option = typeof item === 'string'
+      ? item
+      : item?.value ?? item?.name ?? item?.label ?? item?.selected ?? '';
+    const normalized = String(option).trim().toLowerCase();
+    return normalized === 'hotfix' || normalized === 'true' || normalized === 'checked';
   });
 }
 
