@@ -115,6 +115,24 @@ function token(secret) {
   globalThis.fetch = oldFetch;
 }
 
+// With a Queue binding, Jira receives a fast acceptance response and the
+// slow Jira/Miro work is handed to the queue consumer.
+{
+  const kv = new FakeKv();
+  const queued = [];
+  const env = { ...baseEnv, CARD_MAP: kv, JIRA_WEBHOOK_SECRET: 'webhook-secret', JIRA_WEBHOOK_QUEUE: { send: async body => queued.push(body) } };
+  const response = await worker.fetch(new Request('https://worker.test/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'webhook-secret' },
+    body: JSON.stringify({ issueKey: 'SN-queue-1', status: 'Todo' }),
+  }), env);
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(body.queued, true);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].issueKey, 'SN-QUEUE-1');
+}
+
 // Jira -> Miro must recover a missing KV mapping from the board itself. This
 // keeps existing custom cards movable even when the Miro app's periodic scan
 // was stopped or its first registration request failed.
