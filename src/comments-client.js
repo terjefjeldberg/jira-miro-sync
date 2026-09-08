@@ -10,8 +10,9 @@ const input=document.getElementById('input');
 const message=document.getElementById('message');
 const submit=document.getElementById('submit');
 const data=await miro.board.ui.getModalData();
-const issueKey=String(data&&data.issueKey||'').trim().toUpperCase();
-const itemId=String(data&&data.itemId||'').trim();
+const query=new URLSearchParams(window.location.search);
+const issueKey=String(data&&data.issueKey||query.get('issueKey')||'').trim().toUpperCase();
+const itemId=String(data&&data.itemId||query.get('itemId')||'').trim();
 title.textContent=issueKey ? 'Comments · '+issueKey : 'Comments';
 const plain=node=>{
   if(!node)return '';
