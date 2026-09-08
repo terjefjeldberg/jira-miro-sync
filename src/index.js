@@ -84,6 +84,30 @@ async function stickyToJira(request, env) {
   return json({ ...created, reporterSync: { ok: true, applied: true, miroCreatorId: reporter.creatorId, miroCreatorName: reporter.creatorName, jiraReporterAccountId: reporter.accountId, jiraReporterSource: reporter.source }, originalMiroCreatedSync });
 }
 
+async function jiraComments(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const url = new URL(request.url);
+  const issueKey = normalizeIssueKey(url.searchParams.get('issueKey'));
+  const itemId = String(url.searchParams.get('itemId') ?? '').trim();
+  if (!issueKeyIsValid(issueKey, env) || !itemId) return json({ ok: false, reason: 'Invalid issue key or Miro item ID' }, 400);
+  const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
+  const result = await listIssueComments(env, issueKey);
+  return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
+}
+
+async function addJiraComment(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const issueKey = normalizeIssueKey(parsed.body.issueKey);
+  const itemId = String(parsed.body.itemId ?? '').trim();
+  if (!issueKeyIsValid(issueKey, env) || !itemId) return json({ ok: false, reason: 'Invalid issue key or Miro item ID' }, 400);
+  const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
+  const result = await addIssueComment(env, issueKey, parsed.body.comment);
+  return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
+}
+
 async function directCard(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
@@ -235,6 +259,8 @@ export default {
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
     if (method === 'GET' && path === '/miro-panel') return renderPanel();
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
+    if (method === 'GET' && path === '/jira-comments') return jiraComments(request, env);
+    if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
