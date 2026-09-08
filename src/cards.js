@@ -178,13 +178,14 @@ export async function syncCommentIndicator(env, issueKey) {
     if (current.ok && current.found) {
       const refreshed = await replaceSvg(env, indicatorId, issueKey, svg, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
       if (!refreshed.ok) return refreshed;
-      const moved = await patchItem(env, indicatorId, patch);
+      const moved = await patchItem(env, indicatorId, { ...patch, data: { title: `JIRA_COMMENT_INDICATOR:${issueKey}` } });
       return moved.ok ? { ok: true, visible: true, total: comments.total, itemId: indicatorId, updated: true } : { ok: false, stage: 'comment-indicator-move', miroStatus: moved.status, error: await moved.text() };
     }
     await env.CARD_MAP.delete(indicatorKey);
   }
   const created = await uploadSvg(env, issueKey, svg, patch, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
   if (!created.ok) return created;
+  await patchItem(env, created.itemId, { data: { title: `JIRA_COMMENT_INDICATOR:${issueKey}` } }).catch(() => {});
   await env.CARD_MAP.put(indicatorKey, created.itemId);
   return { ok: true, visible: true, total: comments.total, itemId: created.itemId, created: true };
 }
