@@ -241,8 +241,17 @@ async function jiraUserByName(env, displayName) {
 export async function resolveReporter(env, stickyId, claimedCreatorId) {
   const id = String(stickyId ?? '').trim();
   if (!id || !env.MIRO_TOKEN || !env.MIRO_BOARD_ID) return { ok: false, status: 409, stage: 'reporter-miro-config', reason: 'Missing sticky ID or Miro REST configuration' };
-  const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${env.MIRO_TOKEN}`, Accept: 'application/json' } });
-  if (!response.ok) return { ok: false, status: 409, stage: 'reporter-read-miro-sticky', reason: `Miro item lookup returned HTTP ${response.status}` };
+  const headers = { Authorization: `Bearer ${env.MIRO_TOKEN}`, Accept: 'application/json' };
+  let response = null;
+  let lastError = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items/${encodeURIComponent(id)}`, { headers });
+    if (response.ok) break;
+    lastError = await response.text();
+    if (response.status < 500 || attempt === 2) break;
+    await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+  }
+  if (!response?.ok) return { ok: false, status: 409, stage: 'reporter-read-miro-sticky', reason: `Miro item lookup returned HTTP ${response?.status || 502}`, miroStatus: response?.status || 502, error: lastError };
   const sticky = await response.json();
   if (sticky?.type !== 'sticky_note') return { ok: false, status: 409, stage: 'reporter-verify-miro-sticky', reason: 'The supplied Miro item is not a sticky note' };
   let creator = userIdentity(sticky.createdBy);
