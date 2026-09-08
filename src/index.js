@@ -1,6 +1,6 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
+import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, listIssueComments, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
