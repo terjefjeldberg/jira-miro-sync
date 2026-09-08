@@ -243,8 +243,14 @@ export async function moveMappedItemToStatus(env, itemId, status) {
 
 export async function registerMappings(env, entries) {
   const valid = entries.slice(0, 500).map(entry => ({ issueKey: normalizeIssueKey(entry.issueKey), itemId: String(entry.itemId ?? '').trim() })).filter(entry => entry.issueKey && entry.itemId);
-  await Promise.all(valid.map(entry => env.CARD_MAP.put(customMapKey(entry.issueKey), entry.itemId)));
-  return valid;
+  const accepted = [];
+  for (const entry of valid) {
+    const existing = String(await env.CARD_MAP.get(customMapKey(entry.issueKey)) ?? '').trim();
+    if (existing && existing !== entry.itemId) continue;
+    if (!existing) await env.CARD_MAP.put(customMapKey(entry.issueKey), entry.itemId);
+    accepted.push({ ...entry, mappedItemId: existing || entry.itemId });
+  }
+  return accepted;
 }
 
 export function issueKeyFromImage(item) {
