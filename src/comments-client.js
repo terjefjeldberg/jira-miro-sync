@@ -22,7 +22,7 @@ const plain=node=>{
   return node.type==='paragraph'||node.type==='heading'?value+'\n':value;
 };
 const showMessage=(value,error=false)=>{message.textContent=value||'';message.className=error?'error':''};
-async function currentMiroUserName(){try{const user=await miro.board.getUserInfo();return String(user&& (user.name||user.displayName || [user.firstName,user.lastName].filter(Boolean).join(' ')) || '').trim()||'Miro user'}catch(error){console.warn('Could not read Miro user name',error);return 'Miro user'}}
+async function currentMiroUserName(){try{const token=await miro.board.getIdToken();const part=String(token||'').split('.')[1];if(part){const payload=JSON.parse(atob(part.replace(/-/g,'+').replace(/_/g,'/')));const name=payload.name||payload.display_name||payload.displayName||payload.preferred_username||payload.nickname||payload.username;if(String(name||'').trim())return String(name).trim()}}catch(error){console.warn('Could not read Miro user name from identity token',error)}return 'Miro user'}
 const render=comments=>{
   list.replaceChildren();
   if(!comments.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No comments yet.';list.append(empty);return}
