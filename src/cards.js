@@ -142,7 +142,7 @@ function commentIndicatorSvg(total) {
   if (count <= 0) return '';
   const label = count > 99 ? '99+' : String(count);
   const fontSize = label.length > 2 ? 5.5 : 6.5;
-  return `<g transform="translate(166 35)"><rect x="-10" y="-8" width="20" height="15" rx="2" fill="#fff" stroke="#24527A" stroke-width="0.8"/><path d="M-9 -6 L0 1 L9 -6 M-9 6 L-3 0 M9 6 L3 0" fill="none" stroke="#24527A" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="-7" r="5.5" fill="#F26B38"/><text x="10" y="-5" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${label}</text></g>`;
+  return `<g transform="translate(168 77)"><rect x="-8" y="-6" width="16" height="12" rx="2" fill="#fff" stroke="#24527A" stroke-width="0.8"/><path d="M-7 -4 L0 1 L7 -4 M-7 4 L-2 0 M7 4 L2 0" fill="none" stroke="#24527A" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="-5" r="4.5" fill="#F26B38"/><text x="8" y="-3.4" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${label}</text></g>`;
 }
 
 function indicatorPatch(item) {
