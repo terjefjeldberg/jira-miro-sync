@@ -5,6 +5,7 @@ import { text } from './auth.js';
 export { renderAppClient } from './app-client.js';
 export { renderPanelClient } from './panel-client.js';
 export { renderCommentsClient } from './comments-client.js';
+export function renderCardMenu() { return text(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Card actions</title>${sdk}<style>*{box-sizing:border-box}body{margin:0;padding:18px;background:#171717;color:#f5f5f5;font-family:Arial,sans-serif}h3{margin:0 0 14px;font-size:17px}button{width:100%;margin-top:9px;padding:10px;border:0;border-radius:6px;background:#4262ff;color:#fff;font-weight:600;cursor:pointer}button.secondary{background:#333;color:#ddd}</style></head><body><h3>Jira-kort</h3><button id="comments">Åpne kommentarer</button><button id="close" class="secondary">Lukk</button><script>(async()=>{const data=await miro.board.ui.getModalData();document.getElementById('comments').onclick=()=>miro.board.ui.openModal({url:'/jira-comments-modal',data,width:560,height:700,fullscreen:false});document.getElementById('close').onclick=()=>miro.board.ui.closeModal()})()</script></body></html>`, 'text/html; charset=utf-8'); }
 
 const sdk = '<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>';
 
