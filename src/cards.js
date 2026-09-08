@@ -1,5 +1,5 @@
-import { config, customMapKey, normalizeIssueKey, WORK_TYPE_COLORS } from './config.js';
-import { getCardData } from './jira.js';
+import { commentIndicatorKey, config, customMapKey, normalizeIssueKey, WORK_TYPE_COLORS } from './config.js';
+import { getCardData, listIssueComments } from './jira.js';
 import { deleteImage, getItem, incomingPosition, listItems, issueKeyFromImage, patchItem, replaceSvg, uploadSvg } from './miro.js';
 
 function esc(value) {
@@ -135,6 +135,58 @@ async function dedupeIncoming(env, issueKey, createdItemId) {
   for (const id of ids.slice(1)) if (await deleteImage(env, id)) removed.push(id);
   await env.CARD_MAP.put(customMapKey(issueKey), keep);
   return { keptItemId: keep, removedItemIds: removed };
+}
+
+function commentIndicatorSvg(total) {
+  const count = Math.max(1, Number(total) || 0);
+  const label = count > 99 ? '99+' : String(count);
+  const fontSize = label.length > 2 ? 7 : 8;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="36" viewBox="0 0 48 36"><rect x="3" y="5" width="30" height="23" rx="2" fill="#fff" stroke="#24527A" stroke-width="1"/><path d="M4 7 L18 19 L32 7 M4 27 L14 17 M32 27 L22 17" fill="none" stroke="#24527A" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><circle cx="38" cy="7" r="8" fill="#F26B38"/><text x="38" y="10" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${label}</text></svg>`;
+}
+
+function indicatorPatch(item) {
+  const x = Number(item?.position?.x ?? item?.x), y = Number(item?.position?.y ?? item?.y);
+  const width = Number(item?.geometry?.width ?? item?.width), height = Number(item?.geometry?.height ?? item?.height);
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+  const parentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
+  const patch = { position: { x: x + width / 2 - 25, y: y - height / 2 + 22, origin: 'center' } };
+  if (parentId) patch.parent = { id: parentId };
+  return patch;
+}
+
+export async function syncCommentIndicator(env, issueKey) {
+  issueKey = normalizeIssueKey(issueKey);
+  const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (!itemId) return { ok: true, skipped: true, reason: 'Custom card mapping not found' };
+  const card = await getItem(env, itemId);
+  if (!card.ok) return { ok: false, stage: 'comment-indicator-read-card', miroStatus: card.status, error: card.error };
+  if (!card.found) return { ok: true, skipped: true, reason: 'Custom card not found' };
+  const comments = await listIssueComments(env, issueKey);
+  if (!comments.ok) return { ok: false, stage: 'comment-indicator-read-comments', jiraStatus: comments.status, error: comments.error };
+  const indicatorKey = commentIndicatorKey(issueKey);
+  const indicatorId = String(await env.CARD_MAP.get(indicatorKey) ?? '').trim();
+  if (!comments.total) {
+    if (indicatorId) await deleteImage(env, indicatorId);
+    await env.CARD_MAP.delete(indicatorKey);
+    return { ok: true, visible: false, total: 0 };
+  }
+  const patch = indicatorPatch(card.item);
+  if (!patch) return { ok: false, stage: 'comment-indicator-position', reason: 'Custom card has no valid position' };
+  const svg = commentIndicatorSvg(comments.total);
+  if (indicatorId) {
+    const current = await getItem(env, indicatorId);
+    if (current.ok && current.found) {
+      const refreshed = await replaceSvg(env, indicatorId, issueKey, svg, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
+      if (!refreshed.ok) return refreshed;
+      const moved = await patchItem(env, indicatorId, patch);
+      return moved.ok ? { ok: true, visible: true, total: comments.total, itemId: indicatorId, updated: true } : { ok: false, stage: 'comment-indicator-move', miroStatus: moved.status, error: await moved.text() };
+    }
+    await env.CARD_MAP.delete(indicatorKey);
+  }
+  const created = await uploadSvg(env, issueKey, svg, patch, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
+  if (!created.ok) return created;
+  await env.CARD_MAP.put(indicatorKey, created.itemId);
+  return { ok: true, visible: true, total: comments.total, itemId: created.itemId, created: true };
 }
 
 export async function createIncomingCard(env, issueKey) {
