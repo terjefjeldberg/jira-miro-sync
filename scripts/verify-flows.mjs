@@ -144,6 +144,9 @@ function token(secret) {
   const finalWrites = [];
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
+    if (value.includes('/issue/SN-4/comment?')) {
+      return json({ comments: [], total: 0, maxResults: 100, startAt: 0 });
+    }
     if (value.includes('/issue/SN-4?fields=')) {
       return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11207: '2026-09-07T10:00:00.000+0000' } });
     }
