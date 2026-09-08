@@ -211,9 +211,29 @@ async function miroScim(env, id) {
 export async function resolveMiroCommentAuthor(env, auth) {
   const direct = auth?.name || auth?.displayName || auth?.display_name || auth?.preferred_username || auth?.nickname || auth?.username || auth?.user?.name || auth?.user?.displayName;
   if (String(direct ?? '').trim()) return String(direct).trim();
-  const id = String(auth?.sub || auth?.userId || auth?.user_id || auth?.user?.id || '').trim();
+
+  const candidates = [];
+  const visit = (value, depth = 0) => {
+    if (depth > 3 || value == null) return;
+    if (typeof value === 'string' || typeof value === 'number') {
+      candidates.push(String(value).trim());
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const item of Object.values(value)) visit(item, depth + 1);
+    }
+  };
+  visit(auth);
+  for (const id of candidates) {
+    if (FIXED_MIRO_USERS[id]) return FIXED_MIRO_USERS[id];
+  }
+
+  const id = String(auth?.sub || auth?.userId || auth?.user_id || auth?.uid || auth?.id || auth?.miroUserId || auth?.user?.id || auth?.user?.userId || '').trim();
   if (!id) return '';
-  if (FIXED_MIRO_USERS[id]) return FIXED_MIRO_USERS[id];
   const member = await miroMember(env, id).catch(() => null);
   if (member?.name) return member.name;
   const scim = await miroScim(env, id).catch(() => null);
