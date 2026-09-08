@@ -48,7 +48,9 @@ async function miroToJira(request, env) {
   if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved` });
   if (!itemId) return json({ ok: false, reason: 'Missing custom-card image ID' }, 400);
-  await env.CARD_MAP.put(customMapKey(issueKey), itemId);
+  const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (mappedItemId && mappedItemId !== itemId) return json({ ok: true, changed: false, ignored: true, issueKey, itemId, mappedItemId, reason: 'A different Miro card is already mapped to this Jira issue' });
+  if (!mappedItemId) await env.CARD_MAP.put(customMapKey(issueKey), itemId);
 
   const live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && String(live.status ?? '').trim().toLowerCase() === desiredStatus.toLowerCase()) {
