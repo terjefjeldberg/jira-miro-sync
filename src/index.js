@@ -1,7 +1,7 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
-import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
+import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
@@ -105,6 +105,7 @@ async function addJiraComment(request, env) {
   const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
   const result = await addIssueComment(env, issueKey, parsed.body.comment);
+  if (result.ok) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
 }
 
@@ -197,6 +198,7 @@ async function processJiraWebhookBody(body, env) {
 
   if (!customId) {
     const incomingCreate = await createIncomingCard(env, issueKey);
+    if (incomingCreate.ok !== false) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
@@ -204,6 +206,7 @@ async function processJiraWebhookBody(body, env) {
   // resource first and make the position update the final write, so a Jira
   // status change always leaves the card in the intended column.
   const customRefresh = await refreshCard(env, issueKey);
+  if (customRefresh.ok !== false) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
