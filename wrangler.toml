@@ -12,3 +12,13 @@ enabled = true
 [[kv_namespaces]]
 binding = "CARD_MAP"
 id = "6c0c1018f7f940bbaaef6bc0bca76f47"
+
+[[queues.producers]]
+binding = "JIRA_WEBHOOK_QUEUE"
+queue = "jira-to-miro-events"
+
+[[queues.consumers]]
+queue = "jira-to-miro-events"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 5
