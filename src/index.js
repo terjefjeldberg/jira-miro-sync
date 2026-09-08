@@ -3,7 +3,7 @@ import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './au
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
-import { renderApp, renderAppClient, renderPanel, renderPanelClient } from './ui.js';
+import { renderApp, renderAppClient, renderCommentsClient, renderPanel, renderPanelClient } from './ui.js';
 
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
@@ -259,6 +259,8 @@ export default {
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
     if (method === 'GET' && path === '/miro-panel') return renderPanel();
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
+    if (method === 'GET' && path === '/comments.js') return renderCommentsClient();
+    if (method === 'GET' && path === '/jira-comments-modal') return renderCommentsModal();
     if (method === 'GET' && path === '/jira-comments') return jiraComments(request, env);
     if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
