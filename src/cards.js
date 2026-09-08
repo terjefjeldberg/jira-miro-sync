@@ -87,7 +87,7 @@ export function cardSvg(card) {
   const linkColor = isBlocker ? '#9CCBFF' : '#0A66C2';
   const priority = fit(card.priority, 8, 62) || 'None';
   const assignee = fit(card.assignee, 8, 78) || 'Unassigned';
-  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="102" viewBox="0 0 189 102">', '<rect x="1" y="1" width="187" height="100" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${textColor}">${esc(card.issueKey)}</text>`, `<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${linkColor}">Jira ↗</text>`, title.replaceAll('fill="#1A1A1A"', `fill="${textColor}"`), priorityIcon(card.priority), `<text x="25" y="89" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(priority)}</text>`, `<text x="181" y="89" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(assignee)}</text>`, '</svg>'].join('');
+  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="102" viewBox="0 0 189 102">', '<rect x="1" y="1" width="187" height="100" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${textColor}">${esc(card.issueKey)}</text>`, `<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${linkColor}">Jira ↗</text>`, title.replaceAll('fill="#1A1A1A"', `fill="${textColor}"`), commentIndicatorSvg(card.commentCount), priorityIcon(card.priority), `<text x="25" y="89" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(priority)}</text>`, `<text x="181" y="89" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(assignee)}</text>`, '</svg>'].join('');
 }
 
 export async function createCard(env, issueKey, position, parentId = null) {
@@ -138,10 +138,11 @@ async function dedupeIncoming(env, issueKey, createdItemId) {
 }
 
 function commentIndicatorSvg(total) {
-  const count = Math.max(1, Number(total) || 0);
+  const count = Number(total) || 0;
+  if (count <= 0) return '';
   const label = count > 99 ? '99+' : String(count);
-  const fontSize = label.length > 2 ? 7 : 8;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="36" viewBox="0 0 48 36"><rect x="3" y="5" width="30" height="23" rx="2" fill="#fff" stroke="#24527A" stroke-width="1"/><path d="M4 7 L18 19 L32 7 M4 27 L14 17 M32 27 L22 17" fill="none" stroke="#24527A" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><circle cx="38" cy="7" r="8" fill="#F26B38"/><text x="38" y="10" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${label}</text></svg>`;
+  const fontSize = label.length > 2 ? 5.5 : 6.5;
+  return `<g transform="translate(166 35)"><rect x="-10" y="-8" width="20" height="15" rx="2" fill="#fff" stroke="#24527A" stroke-width="0.8"/><path d="M-9 -6 L0 1 L9 -6 M-9 6 L-3 0 M9 6 L3 0" fill="none" stroke="#24527A" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="-7" r="5.5" fill="#F26B38"/><text x="10" y="-5" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${label}</text></g>`;
 }
 
 function indicatorPatch(item) {
@@ -156,38 +157,14 @@ function indicatorPatch(item) {
 
 export async function syncCommentIndicator(env, issueKey) {
   issueKey = normalizeIssueKey(issueKey);
-  const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
-  if (!itemId) return { ok: true, skipped: true, reason: 'Custom card mapping not found' };
-  const card = await getItem(env, itemId);
-  if (!card.ok) return { ok: false, stage: 'comment-indicator-read-card', miroStatus: card.status, error: card.error };
-  if (!card.found) return { ok: true, skipped: true, reason: 'Custom card not found' };
-  const comments = await listIssueComments(env, issueKey);
-  if (!comments.ok) return { ok: false, stage: 'comment-indicator-read-comments', jiraStatus: comments.status, error: comments.error };
-  const indicatorKey = commentIndicatorKey(issueKey);
-  const indicatorId = String(await env.CARD_MAP.get(indicatorKey) ?? '').trim();
-  if (!comments.total) {
-    if (indicatorId) await deleteImage(env, indicatorId);
-    await env.CARD_MAP.delete(indicatorKey);
-    return { ok: true, visible: false, total: 0 };
+  const legacyIndicatorKey = commentIndicatorKey(issueKey);
+  const legacyIndicatorId = String(await env.CARD_MAP.get(legacyIndicatorKey) ?? '').trim();
+  if (legacyIndicatorId) {
+    await deleteImage(env, legacyIndicatorId).catch(() => {});
+    await env.CARD_MAP.delete(legacyIndicatorKey);
   }
-  const patch = indicatorPatch(card.item);
-  if (!patch) return { ok: false, stage: 'comment-indicator-position', reason: 'Custom card has no valid position' };
-  const svg = commentIndicatorSvg(comments.total);
-  if (indicatorId) {
-    const current = await getItem(env, indicatorId);
-    if (current.ok && current.found) {
-      const refreshed = await replaceSvg(env, indicatorId, issueKey, svg, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
-      if (!refreshed.ok) return refreshed;
-      const moved = await patchItem(env, indicatorId, { ...patch, data: { title: `JIRA_COMMENT_INDICATOR:${issueKey}` } });
-      return moved.ok ? { ok: true, visible: true, total: comments.total, itemId: indicatorId, updated: true } : { ok: false, stage: 'comment-indicator-move', miroStatus: moved.status, error: await moved.text() };
-    }
-    await env.CARD_MAP.delete(indicatorKey);
-  }
-  const created = await uploadSvg(env, issueKey, svg, patch, `JIRA_COMMENT_INDICATOR:${issueKey}`, 48);
-  if (!created.ok) return created;
-  await patchItem(env, created.itemId, { data: { title: `JIRA_COMMENT_INDICATOR:${issueKey}` } }).catch(() => {});
-  await env.CARD_MAP.put(indicatorKey, created.itemId);
-  return { ok: true, visible: true, total: comments.total, itemId: created.itemId, created: true };
+  const refreshed = await refreshCard(env, issueKey);
+  return refreshed.ok === false ? refreshed : { ...refreshed, commentIndicator: 'embedded', visible: true };
 }
 
 export async function createIncomingCard(env, issueKey) {
@@ -216,6 +193,9 @@ export async function refreshCard(env, issueKey) {
 
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
+  const comments = await listIssueComments(env, issueKey);
+  if (!comments.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-comments', jiraStatus: comments.status, error: comments.error };
+  data.commentCount = comments.total;
   const result = await replaceSvg(env, itemId, issueKey, cardSvg(data));
   if (!result.ok) return { ...result, mapped: true, itemId };
   return { ok: true, refreshed: true, mapped: true, itemId, fields: { summary: data.summary, priority: data.priority, assignee: data.assignee, workType: data.workType, hotfixCandidate: data.hotfixCandidate } };
