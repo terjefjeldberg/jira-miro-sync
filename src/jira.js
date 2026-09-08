@@ -297,3 +297,45 @@ export async function applyStickyMetadata(env, issueKey, reporter) {
   if (!response.ok) return { ok: false, stage: 'original-miro-created-jira-update', reason: `Jira rejected Original Miro created update with HTTP ${response.status}`, error: await response.text() };
   return { ok: true, reporter: reporter.creatorName, originalMiroCreated: created };
 }
+
+export async function listIssueComments(env, issueKey) {
+  const response = await request(env, `/issue/${encodeURIComponent(normalizeIssueKey(issueKey))}/comment?orderBy=created&maxResults=100`);
+  if (!response.ok) return { ok: false, status: response.status, error: await response.text() };
+  const body = await response.json();
+  return {
+    ok: true,
+    comments: (body?.comments || []).map(comment => ({
+      id: String(comment?.id ?? ''),
+      author: String(comment?.author?.displayName ?? comment?.author?.emailAddress ?? 'Unknown user'),
+      authorAccountId: String(comment?.author?.accountId ?? ''),
+      created: comment?.created ?? null,
+      updated: comment?.updated ?? null,
+      body: comment?.body ?? null,
+    })),
+    total: Number(body?.total ?? body?.comments?.length ?? 0),
+  };
+}
+
+export async function addIssueComment(env, issueKey, commentText) {
+  const text = String(commentText ?? '').trim();
+  if (!text) return { ok: false, status: 400, reason: 'Comment cannot be empty' };
+  if (text.length > 10000) return { ok: false, status: 400, reason: 'Comment is too long', maxLength: 10000 };
+  const response = await request(env, `/issue/${encodeURIComponent(normalizeIssueKey(issueKey))}/comment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: adf(text) }),
+  });
+  if (!response.ok) return { ok: false, status: response.status, error: await response.text() };
+  const comment = await response.json();
+  return {
+    ok: true,
+    comment: {
+      id: String(comment?.id ?? ''),
+      author: String(comment?.author?.displayName ?? comment?.author?.emailAddress ?? 'Unknown user'),
+      authorAccountId: String(comment?.author?.accountId ?? ''),
+      created: comment?.created ?? null,
+      updated: comment?.updated ?? null,
+      body: comment?.body ?? null,
+    },
+  };
+}
