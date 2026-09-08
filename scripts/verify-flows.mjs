@@ -124,13 +124,13 @@ function token(secret) {
   const response = await worker.fetch(new Request('https://worker.test/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'webhook-secret' },
-    body: JSON.stringify({ issueKey: 'SN-queue-1', status: 'Todo' }),
+    body: JSON.stringify({ issueKey: 'SN-999', status: 'Todo' }),
   }), env);
   const body = await response.json();
   assert.equal(response.status, 202);
   assert.equal(body.queued, true);
   assert.equal(queued.length, 1);
-  assert.equal(queued[0].issueKey, 'SN-QUEUE-1');
+  assert.equal(queued[0].issueKey, 'SN-999');
 }
 
 // Jira -> Miro must recover a missing KV mapping from the board itself. This
