@@ -3,7 +3,7 @@ import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './au
 import { applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
-import { renderApp, renderAppClient, renderCommentsClient, renderPanel, renderPanelClient } from './ui.js';
+import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
