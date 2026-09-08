@@ -43,7 +43,7 @@ const healthBody = await health.json();
 assert.equal(healthBody.ok, true);
 assert.equal(healthBody.projectKey, 'SN');
 
-for (const path of ['/app.js', '/panel.js']) {
+for (const path of ['/app.js', '/panel.js', '/comments.js']) {
   const response = await worker.fetch(new Request(`https://worker.test${path}`), env);
   assert.equal(response.status, 200);
   const source = await response.text();
