@@ -7,7 +7,7 @@ export function renderAppClient(env) {
 const layout=${JSON.stringify(cfg.layout)},threshold=${cfg.overlapThreshold},jiraSiteUrl=${JSON.stringify(cfg.jiraSiteUrl)};
 const timers=new Map(),baselines=new Map(),rollbacks=new Map(),customKnown=new Map();
 const norm=v=>String(v||'').trim().toUpperCase();
-const imageKey=item=>{const title=String(item&&((item.data&&item.data.title)||item.title)||'').trim();const m=title.match(/^CUSTOM_JIRA_CARD:(${cfg.jiraProjectKey}-\d+)$/i);return m?norm(m[1]):null};
+const imageKey=item=>{const title=String(item&&((item.data&&item.data.title)||item.title)||'').trim();const m=title.match(/^CUSTOM_JIRA_CARD:(${cfg.jiraProjectKey}-\d+)$/i);return m?norm(m[1]):null};const commentKey=item=>{const title=String(item&&((item.data&&item.data.title)||item.title)||'').trim();const m=title.match(/^JIRA_COMMENT_INDICATOR:(${cfg.jiraProjectKey}-\d+)$/i);return m?norm(m[1]):null};
 const snapshot=item=>{if(!item||item.type!=='image')return null;const key=imageKey(item);return key?{item,key,x:Number(item.x),y:Number(item.y),width:Number(item.width)||1}:null};
 const remember=s=>{if(s&&Number.isFinite(s.x)&&Number.isFinite(s.y))baselines.set(String(s.item.id),{x:s.x,y:s.y})};
 const inside=(x,y)=>Number.isFinite(x)&&Number.isFinite(y)&&x>=layout.board.left&&x<=layout.board.right&&y>=layout.board.top&&y<=layout.board.bottom;
@@ -16,6 +16,7 @@ async function boardPosition(s){const item=s.item,x=s.x,y=s.y;if(!Number.isFinit
 async function column(s){const pos=await boardPosition(s);if(!pos)return null;const w=s.width||1,l=pos.x-w/2,r=pos.x+w/2;return layout.columns.map(c=>({...c,ratio:Math.max(0,Math.min(r,c.right)-Math.max(l,c.left))/w})).sort((a,b)=>b.ratio-a.ratio)[0]}
 async function post(path,body){const token=await miro.board.getIdToken();return fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)})}
 async function ensureLink(item,key){const link=jiraSiteUrl+'/browse/'+key;if(item.linkedTo===link)return;try{item.linkedTo=link;await item.sync()}catch(e){console.error('Could not link Jira card',key,e)}}
+async function openComments(item,key){try{if(!(await miro.board.ui.canOpenModal()))return;const cards=await miro.board.get({type:'image'});const card=cards.find(candidate=>imageKey(candidate)===key);if(!card)return;await miro.board.ui.openModal({url:'/jira-comments-modal',data:{issueKey:key,itemId:String(card.id)},width:560,height:700,fullscreen:false})}catch(e){console.error('Could not open Jira comments',e)}}
 async function detachDuplicate(item,key){const id=String(item&&item.id||'').trim(),original=customKnown.get(key);if(!original||!id||original===id)return false;try{const title='Miro copy – '+key;if(item.data&&typeof item.data==='object')item.data.title=title;item.title=title;await item.sync();console.log('Detached copied Jira card while keeping Jira link',key,id);return true}catch(e){console.error('Could not detach copied Jira card',key,e);return false}}
 async function register(){const info=await miro.board.getInfo(),custom=[];for(const item of await miro.board.get({type:'image'})||[]){const s=snapshot(item);if(!s)continue;await ensureLink(item,s.key);const id=String(item.id);if(!baselines.has(id))remember(s);if(customKnown.get(s.key)!==id){custom.push({issueKey:s.key,itemId:id});customKnown.set(s.key,id)}}if(custom.length)await post('/register-custom-cards',{boardId:info.id,cards:custom})}
 async function rollback(s,original){if(!original)return false;try{const current=await miro.board.getById(String(s.item.id));if(!current)return false;rollbacks.set(String(s.item.id),Date.now()+5000);current.x=original.x;current.y=original.y;await current.sync();const after=snapshot(current);if(after)remember(after);return true}catch(e){console.error('Rollback failed',e);return false}}
@@ -25,6 +26,7 @@ async function itemsCreated(event){const items=event&&event.items||[],info=await
 let linkScanTimer=null;
 function startLinkScan(){if(linkScanTimer)return;const tick=async()=>{try{await register()}catch(error){console.error('Link registration scan failed',error)}linkScanTimer=setTimeout(tick,10000)};tick()}
 await miro.board.ui.on('icon:click',async()=>{try{startLinkScan();if(await miro.board.ui.canOpenPanel())await miro.board.ui.openPanel({url:'/miro-panel'})}catch(e){console.error(e)}});
+await miro.board.ui.on('selection:update',async event=>{const selected=event&&event.items||await miro.board.getSelection();const item=Array.isArray(selected)&&selected.length===1?selected[0]:null;const key=commentKey(item);if(key)await openComments(item,key)});
 await miro.board.ui.on('items:create',async event=>{startLinkScan();await itemsCreated(event)});
 await miro.board.ui.on('experimental:items:update',itemsUpdated);
 startLinkScan();
