@@ -35,6 +35,7 @@ const render=comments=>{
     const body=document.createElement('p');body.textContent=plain(comment.body).trim();
     article.append(header,body);list.append(article);
   }
+  list.scrollTop=list.scrollHeight;
 };
 const load=async()=>{
   if(!issueKey||!itemId){showMessage('This comment control is not linked to a verified custom card.',true);return}
