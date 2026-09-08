@@ -229,7 +229,7 @@ export default {
     if (method === 'OPTIONS') return preflight();
     if (method === 'GET' && path === '/health') {
       const cfg = config(env);
-      return json({ ok: true, cardMapConfigured: Boolean(env.CARD_MAP), miroClientSecretConfigured: Boolean(env.MIRO_CLIENT_SECRET), miroTokenConfigured: Boolean(env.MIRO_TOKEN), miroBoardConfigured: Boolean(env.MIRO_BOARD_ID), jiraTokenConfigured: Boolean(env.JIRA_API_TOKEN), jiraCloudIdConfigured: Boolean(env.JIRA_CLOUD_ID), jiraWebhookSecretConfigured: Boolean(env.JIRA_WEBHOOK_SECRET), projectKey: cfg.jiraProjectKey, incomingFrameId: cfg.incomingFrameId, testAreaField: cfg.fields.testArea });
+      return json({ ok: true, cardMapConfigured: Boolean(env.CARD_MAP), jiraWebhookQueueConfigured: Boolean(env.JIRA_WEBHOOK_QUEUE), miroClientSecretConfigured: Boolean(env.MIRO_CLIENT_SECRET), miroTokenConfigured: Boolean(env.MIRO_TOKEN), miroBoardConfigured: Boolean(env.MIRO_BOARD_ID), jiraTokenConfigured: Boolean(env.JIRA_API_TOKEN), jiraCloudIdConfigured: Boolean(env.JIRA_CLOUD_ID), jiraWebhookSecretConfigured: Boolean(env.JIRA_WEBHOOK_SECRET), projectKey: cfg.jiraProjectKey, incomingFrameId: cfg.incomingFrameId, testAreaField: cfg.fields.testArea });
     }
     if (method === 'GET' && path === '/miro-app') return renderApp();
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
