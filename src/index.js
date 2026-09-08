@@ -109,8 +109,8 @@ async function addJiraComment(request, env) {
   if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
   const rawComment = String(parsed.body.comment ?? '').trim().replace(/^(?:[^\n:]{1,120})\s+via\s+Miro:\s*/i, '').trim();
   if (!rawComment) return json({ ok: false, reason: 'Comment cannot be empty' }, 400);
-  const author = await resolveMiroCommentAuthor(env, auth);
-  const comment = author ? `${author} via Miro:\n\n${rawComment}` : rawComment;
+  const author = (await resolveMiroCommentAuthor(env, auth)) || 'Miro user';
+  const comment = `${author} via Miro:\n\n${rawComment}`;
   const result = await addIssueComment(env, issueKey, comment);
   if (result.ok) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
