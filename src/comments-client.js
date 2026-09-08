@@ -18,7 +18,7 @@ const plain=node=>{
   if(typeof node==='string')return node;
   if(node.type==='text')return String(node.text||'');
   const value=(node.content||[]).map(plain).join('');
-  return node.type==='paragraph'||node.type==='heading'?value+'\\n':value;
+  return node.type==='paragraph'||node.type==='heading'?value+'\n':value;
 };
 const showMessage=(value,error=false)=>{message.textContent=value||'';message.className=error?'error':''};
 const render=comments=>{
