@@ -208,7 +208,6 @@ async function processJiraWebhookBody(body, env) {
   // resource first and make the position update the final write, so a Jira
   // status change always leaves the card in the intended column.
   const customRefresh = await refreshCard(env, issueKey);
-  if (customRefresh.ok !== false) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
