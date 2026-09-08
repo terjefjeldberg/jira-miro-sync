@@ -22,6 +22,7 @@ const plain=node=>{
   return node.type==='paragraph'||node.type==='heading'?value+'\n':value;
 };
 const showMessage=(value,error=false)=>{message.textContent=value||'';message.className=error?'error':''};
+async function currentMiroUserName(){try{const user=await miro.board.getUserInfo();return String(user&& (user.name||user.displayName || [user.firstName,user.lastName].filter(Boolean).join(' ')) || '').trim()||'Miro user'}catch(error){console.warn('Could not read Miro user name',error);return 'Miro user'}}
 const render=comments=>{
   list.replaceChildren();
   if(!comments.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No comments yet.';list.append(empty);return}
@@ -46,10 +47,12 @@ const load=async()=>{
 form.addEventListener('submit',async event=>{
   event.preventDefault();
   const comment=input.value.trim();if(!comment)return;
+  const author=await currentMiroUserName();
+  const jiraComment=author+' via Miro:\n\n'+comment;
   submit.disabled=true;showMessage('Sending…');
   try{
     const token=await miro.board.getIdToken();
-    const response=await fetch('/jira-comments',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({issueKey,itemId,comment})});
+    const response=await fetch('/jira-comments',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({issueKey,itemId,comment:jiraComment})});
     const result=await response.json().catch(()=>null);
     if(!response.ok||!result||!result.ok)throw new Error(result&&result.reason||'Could not add Jira comment.');
     input.value='';showMessage('Comment added.');await load();
