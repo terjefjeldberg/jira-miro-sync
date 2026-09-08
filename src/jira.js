@@ -208,6 +208,18 @@ async function miroScim(env, id) {
   return name ? { id, name, email } : null;
 }
 
+export async function resolveMiroCommentAuthor(env, auth) {
+  const direct = auth?.name || auth?.displayName || auth?.display_name || auth?.preferred_username || auth?.nickname || auth?.username || auth?.user?.name || auth?.user?.displayName;
+  if (String(direct ?? '').trim()) return String(direct).trim();
+  const id = String(auth?.sub || auth?.userId || auth?.user_id || auth?.user?.id || '').trim();
+  if (!id) return '';
+  if (FIXED_MIRO_USERS[id]) return FIXED_MIRO_USERS[id];
+  const member = await miroMember(env, id).catch(() => null);
+  if (member?.name) return member.name;
+  const scim = await miroScim(env, id).catch(() => null);
+  return scim?.name || '';
+}
+
 async function jiraUserByName(env, displayName) {
   const wanted = displayName.trim().toLocaleLowerCase();
   const { base, headers } = jiraApi(env);
