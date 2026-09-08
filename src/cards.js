@@ -57,7 +57,7 @@ function wrap(text, size, maxWidth) {
 }
 
 function titleLayout(text) {
-  const box = { x: 10, y: 20, width: 140, height: 52 };
+  const box = { x: 10, y: 20, width: 150, height: 52 };
   for (let size = 24; size >= 8; size -= 1) {
     const lines = wrap(text, size, box.width);
     const lineHeight = size * 1.05;
