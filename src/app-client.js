@@ -32,7 +32,7 @@ async function itemsCreated(event){const items=event&&event.items||[],info=await
 let linkScanTimer=null;
 function startLinkScan(){if(linkScanTimer)return;const tick=async()=>{try{await register()}catch(error){console.error('Link registration scan failed',error)}linkScanTimer=setTimeout(tick,10000)};tick()}
 await miro.board.ui.on('icon:click',async()=>{try{startLinkScan();if(await miro.board.ui.canOpenPanel())await miro.board.ui.openPanel({url:'/miro-panel'})}catch(e){console.error(e)}});
-await miro.board.ui.on('selection:update',async event=>{const selected=event&&event.items||await miro.board.getSelection();const item=Array.isArray(selected)&&selected.length===1?selected[0]:null;const comment=await resolveCommentKey(item);if(comment){stopIndicatorFollow();await openComments(item,comment);return}const card=imageKey(item);if(card){followIndicator(item,card);return}stopIndicatorFollow()});
+await miro.board.ui.on('selection:update',async event=>{const selected=event&&event.items||await miro.board.getSelection();const raw=Array.isArray(selected)&&selected.length===1?selected[0]:null;const item=raw&&raw.id?await miro.board.getById(String(raw.id)):raw;const comment=await resolveCommentKey(item);if(comment){stopIndicatorFollow();await openComments(item,comment);return}const card=imageKey(item);if(card){followIndicator(item,card);return}stopIndicatorFollow()});
 await miro.board.ui.on('items:create',async event=>{startLinkScan();await itemsCreated(event)});
 await miro.board.ui.on('experimental:items:update',itemsUpdated);try{await miro.board.ui.on('items:update',itemsUpdated)}catch{}
 startLinkScan();
