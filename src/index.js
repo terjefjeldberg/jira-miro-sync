@@ -113,14 +113,11 @@ async function setConversionStatus(request, env) {
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
 }
 
-async function jiraWebhook(request, env) {
-  if (!env.JIRA_WEBHOOK_SECRET) return json({ ok: false, reason: 'JIRA_WEBHOOK_SECRET is not configured' }, 500);
-  if (!requireJiraWebhook(request, env)) return json({ ok: false, reason: 'Invalid Jira webhook secret' }, 401);
-  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
-  const issueKey = normalizeIssueKey(parsed.body.issueKey);
+async function processJiraWebhookBody(body, env) {
+  const issueKey = normalizeIssueKey(body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
 
-  let status = String(parsed.body.status ?? '').trim();
+  let status = String(body.status ?? '').trim();
   let live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && live.status) status = live.status;
 
@@ -193,7 +190,40 @@ async function jiraWebhook(request, env) {
   return json({ ok, issueKey, status, moved: Boolean(custom.moved), mappingRecoveredFromBoard, custom, customRefresh }, ok ? 200 : 500);
 }
 
+async function jiraWebhook(request, env) {
+  if (!env.JIRA_WEBHOOK_SECRET) return json({ ok: false, reason: 'JIRA_WEBHOOK_SECRET is not configured' }, 500);
+  if (!requireJiraWebhook(request, env)) return json({ ok: false, reason: 'Invalid Jira webhook secret' }, 401);
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const body = parsed.body;
+  const issueKey = normalizeIssueKey(body.issueKey);
+  if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
+
+  // When the Queue binding exists, acknowledge Jira immediately and let the
+  // consumer perform the potentially slow Jira/Miro work. Until then the
+  // existing synchronous path remains active as a safe fallback.
+  if (env.JIRA_WEBHOOK_QUEUE && typeof env.JIRA_WEBHOOK_QUEUE.send === 'function') {
+    try {
+      await env.JIRA_WEBHOOK_QUEUE.send({ ...body, issueKey, queuedAt: new Date().toISOString() });
+      return json({ ok: true, accepted: true, queued: true, issueKey }, 202);
+    } catch (error) {
+      console.error('Failed to enqueue Jira webhook', error);
+      return json({ ok: false, accepted: false, queued: false, issueKey, reason: 'Queue unavailable' }, 503);
+    }
+  }
+
+  return processJiraWebhookBody(body, env);
+}
+
 export default {
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      const response = await processJiraWebhookBody(message.body ?? {}, env);
+      if (response.status >= 500) {
+        throw new Error(`Jira webhook processing failed with HTTP ${response.status}`);
+      }
+    }
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url), method = request.method, path = url.pathname;
     if (method === 'OPTIONS') return preflight();
