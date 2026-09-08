@@ -99,7 +99,8 @@ async function jiraComments(request, env) {
 }
 
 async function addJiraComment(request, env) {
-  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const auth = await requireMiro(request, env);
+  if (!auth) return json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const issueKey = normalizeIssueKey(parsed.body.issueKey);
   const itemId = String(parsed.body.itemId ?? '').trim();
