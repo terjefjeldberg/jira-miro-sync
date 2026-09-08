@@ -1,6 +1,6 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, listIssueComments, resolveReporter, transitionIssue } from './jira.js';
+import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, listIssueComments, resolveMiroCommentAuthor, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
@@ -106,7 +106,11 @@ async function addJiraComment(request, env) {
   if (!issueKeyIsValid(issueKey, env) || !itemId) return json({ ok: false, reason: 'Invalid issue key or Miro item ID' }, 400);
   const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
-  const result = await addIssueComment(env, issueKey, parsed.body.comment);
+  const rawComment = String(parsed.body.comment ?? '').trim().replace(/^(?:[^\\n:]{1,120})\\s+via\\s+Miro:\\s*/i, '').trim();
+  if (!rawComment) return json({ ok: false, reason: 'Comment cannot be empty' }, 400);
+  const author = await resolveMiroCommentAuthor(env, auth);
+  const comment = author ? \`${author} via Miro:\\n\\n${rawComment}\` : rawComment;
+  const result = await addIssueComment(env, issueKey, comment);
   if (result.ok) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
 }
