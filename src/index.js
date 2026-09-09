@@ -225,6 +225,7 @@ async function processJiraWebhookBody(body, env) {
 
   // Status is represented by the card's column, not its SVG content. Keep the
   // full refresh for other field changes and unknown webhook formats.
+  console.log('Jira to Miro refresh started');
   const customRefresh = needsCardRefresh(body)
     ? await refreshCard(env, issueKey, live)
     : { ok: true, refreshed: false, skipped: 'status-only-webhook' };
@@ -235,6 +236,7 @@ async function processJiraWebhookBody(body, env) {
     status: customRefresh.miroStatus ?? customRefresh.jiraStatus ?? null,
     skipped: customRefresh.skipped ?? null,
   });
+  console.log('Jira to Miro move started');
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   console.log('Jira to Miro processing finished', {
     elapsedMs: Date.now() - startedAt,
@@ -280,7 +282,13 @@ async function jiraWebhook(request, env) {
 export default {
   async queue(batch, env) {
     for (const message of batch.messages) {
-      const response = await processJiraWebhookBody(message.body ?? {}, env);
+      let response;
+      try {
+        response = await processJiraWebhookBody(message.body ?? {}, env);
+      } catch (error) {
+        console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error' });
+        throw error;
+      }
       if (response.status >= 500) {
         throw new Error(`Jira webhook processing failed with HTTP ${response.status}`);
       }
