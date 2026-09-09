@@ -136,6 +136,7 @@ function cardOverlapRatio(a, b) {
 
 async function collisionFreePosition(env, item, base, target, mode) {
   const cfg = config(env);
+  const scanStartedAt = Date.now();
   const width = Number(item?.geometry?.width ?? item?.width);
   const height = Number(item?.geometry?.height ?? item?.height);
   if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0) return { ...base, adjusted: false };
@@ -146,6 +147,7 @@ async function collisionFreePosition(env, item, base, target, mode) {
     // Miro's REST API can ignore parent_item_id when combined with type.
     // Fetch images first and filter by parent locally so collisions are reliable.
     const listed = await listItems(env, { type: 'image' });
+    console.log('Miro collision list finished', { mode, elapsedMs: Date.now() - scanStartedAt, ok: listed.ok });
     if (!listed.ok) return { ...base, adjusted: false };
     for (const other of listed.items) {
       const otherParentId = String(other?.parent?.id ?? other?.parentId ?? '');
@@ -158,6 +160,7 @@ async function collisionFreePosition(env, item, base, target, mode) {
     }
   } else {
     const listed = await listItems(env, { type: 'image' });
+    console.log('Miro collision list finished', { mode, elapsedMs: Date.now() - scanStartedAt, ok: listed.ok });
     if (!listed.ok) return { ...base, adjusted: false };
     for (const other of listed.items) {
       if (String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
@@ -203,10 +206,12 @@ async function findWorkflowFrame(env, canvasX, canvasY) {
 }
 
 export async function moveMappedItemToStatus(env, itemId, status) {
+  const startedAt = Date.now();
   const cfg = config(env);
   const target = cfg.layout.columns.find(column => normalizeStatus(column.status) === normalizeStatus(status));
   if (!target) return { ok: true, moved: false, ignored: true, reason: `Unapproved status: ${status}` };
   const read = await getItem(env, itemId);
+  console.log('Miro move item read finished', { elapsedMs: Date.now() - startedAt, ok: read.ok, found: read.found ?? null });
   if (!read.ok) return { ok: false, stage: 'miro-read', miroStatus: read.status, error: read.error };
   if (!read.found) return { ok: true, mapped: false, moved: false, missing: true };
   const item = read.item;
@@ -220,12 +225,14 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   const parentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
   if (parentId && relativeTo.startsWith('parent_')) {
     const parentRead = await getItem(env, parentId);
+    console.log('Miro move parent read finished', { elapsedMs: Date.now() - startedAt, ok: parentRead.ok, found: parentRead.found ?? null });
     const parent = parentRead?.item;
     const parentWidth = Number(parent?.geometry?.width), parentHeight = Number(parent?.geometry?.height);
     if (parentRead.ok && parentRead.found && Number.isFinite(parentWidth) && Number.isFinite(parentHeight) && parentWidth >= cfg.layout.board.right && parentHeight >= cfg.layout.board.bottom && insideBoard(cfg.layout, rawX, rawY)) {
       if (overlap(rawX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
       const placement = await collisionFreePosition(env, item, { x: target.targetX, y: rawY }, target, 'parent-local');
       const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
+      console.log('Miro move patch finished', { movementMode: 'parent-local', elapsedMs: Date.now() - startedAt, ok: response.ok, status: response.ok ? null : response.status });
       return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: rawX, toX: placement.x, yPreserved: placement.y, movementMode: 'parent-local', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
     }
   }
@@ -238,6 +245,7 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   const targetCanvasX = frame.left + target.targetX;
   const placement = await collisionFreePosition(env, item, { x: targetCanvasX, y: canvas.y, frameLeft: frame.left, frameTop: frame.top }, target, 'canvas');
   const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
+  console.log('Miro move patch finished', { movementMode: 'canvas', elapsedMs: Date.now() - startedAt, ok: response.ok, status: response.ok ? null : response.status });
   return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: placement.x, yPreserved: placement.y, movementMode: 'canvas', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
 }
 
