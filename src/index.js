@@ -225,7 +225,7 @@ async function processJiraWebhookBody(body, env) {
   // Status is represented by the card's column, not its SVG content. Keep the
   // full refresh for other field changes and unknown webhook formats.
   const customRefresh = needsCardRefresh(body)
-    ? await refreshCard(env, issueKey)
+    ? await refreshCard(env, issueKey, live)
     : { ok: true, refreshed: false, skipped: 'status-only-webhook' };
   console.log('Jira to Miro refresh finished', {
     elapsedMs: Date.now() - startedAt,

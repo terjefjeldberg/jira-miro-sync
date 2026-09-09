@@ -179,7 +179,7 @@ export async function createIncomingCard(env, issueKey) {
   return { ...created, itemId: dedupe.keptItemId, position, dedupe };
 }
 
-export async function refreshCard(env, issueKey) {
+export async function refreshCard(env, issueKey, existingData = null) {
   issueKey = normalizeIssueKey(issueKey);
   const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (!itemId) return { ok: true, refreshed: false, mapped: false };
@@ -192,7 +192,7 @@ export async function refreshCard(env, issueKey) {
   }
 
   const [data, comments] = await Promise.all([
-    getCardData(env, issueKey),
+    existingData?.ok ? existingData : getCardData(env, issueKey),
     listIssueComments(env, issueKey),
   ]);
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
