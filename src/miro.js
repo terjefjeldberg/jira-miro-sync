@@ -123,6 +123,8 @@ const COLLISION_DIRECTIONS = [
   { x: 0, y: 1 },
   { x: 0, y: -1 },
 ];
+const workflowParentCache = new Map();
+const WORKFLOW_PARENT_CACHE_TTL_MS = 60_000;
 
 function cardOverlapRatio(a, b) {
   const aLeft = a.x - a.width / 2, aRight = a.x + a.width / 2;
@@ -224,8 +226,23 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   const relativeTo = String(item?.position?.relativeTo ?? item?.relativeTo ?? 'canvas_center');
   const parentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
   if (parentId && relativeTo.startsWith('parent_')) {
-    const parentRead = await getItem(env, parentId);
-    console.log('Miro move parent read finished', { elapsedMs: Date.now() - startedAt, ok: parentRead.ok, found: parentRead.found ?? null });
+    const cachedParent = workflowParentCache.get(parentId);
+    const cacheValid = cachedParent && Date.now() - cachedParent < WORKFLOW_PARENT_CACHE_TTL_MS;
+    const parentRead = cacheValid
+      ? {
+        ok: true,
+        found: true,
+        item: { geometry: { width: cfg.layout.board.right, height: cfg.layout.board.bottom } },
+      }
+      : await getItem(env, parentId);
+    if (!cacheValid && parentRead.ok && parentRead.found) {
+      const width = Number(parentRead.item?.geometry?.width);
+      const height = Number(parentRead.item?.geometry?.height);
+      if (width >= cfg.layout.board.right && height >= cfg.layout.board.bottom) {
+        workflowParentCache.set(parentId, Date.now());
+      }
+    }
+    console.log('Miro move parent read finished', { elapsedMs: Date.now() - startedAt, ok: parentRead.ok, found: parentRead.found ?? null, cached: Boolean(cacheValid) });
     const parent = parentRead?.item;
     const parentWidth = Number(parent?.geometry?.width), parentHeight = Number(parent?.geometry?.height);
     if (parentRead.ok && parentRead.found && Number.isFinite(parentWidth) && Number.isFinite(parentHeight) && parentWidth >= cfg.layout.board.right && parentHeight >= cfg.layout.board.bottom && insideBoard(cfg.layout, rawX, rawY)) {
