@@ -7,7 +7,8 @@ import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, rende
 
 function changedWebhookFields(body) {
   const items = Array.isArray(body?.changelog?.items) ? body.changelog.items : [];
-  return items.map(item => String(item?.field ?? '').trim().toLowerCase()).filter(Boolean);
+  const fields = Array.isArray(body?.changedFields) ? body.changedFields : items.map(item => item?.field);
+  return fields.map(field => String(field ?? '').trim().toLowerCase()).filter(Boolean);
 }
 
 function needsCardRefresh(body) {
