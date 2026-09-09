@@ -95,7 +95,7 @@ export async function createCard(env, issueKey, position, parentId = null) {
   const existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
   const data = await getCardData(env, issueKey);
-  if (!data.ok) return { ok: false, status: 502, stage: 'read-jira-card', jiraStatus: data.status, error: data.error };
+  if (!data.ok) return { ok: false, status: 502, stage: 'read-jira-data', jiraStatus: data.status, error: data.error };
   const patch = { position: { x: Number(position.x), y: Number(position.y), origin: 'center' } };
   if (parentId) patch.parent = { id: parentId };
   const created = await uploadSvg(env, issueKey, cardSvg(data), patch);

@@ -24,7 +24,7 @@ There are no patch-on-patch wrapper files. A behavior should have one implementa
 
 1. validates `X-Webhook-Secret`;
 2. reads Jira's live status;
-3. looks up native/custom Miro mappings in KV;
+3. looks up custom-card mappings in KV;
 4. refreshes custom-card content;
 5. moves mapped cards horizontally while preserving Y;
 6. creates an Incoming custom card only when a Jira-created issue has no mapping.
@@ -33,7 +33,6 @@ There are no patch-on-patch wrapper files. A behavior should have one implementa
 
 The Miro app watches card/image movement. After debounce and the 60% column-overlap rule it calls:
 
-- `POST /miro-to-jira` for native Jira cards;
 - `POST /custom-miro-to-jira` for custom image cards.
 
 Jira rejection causes a Miro rollback. Moving to Functional review is rejected when Test area is empty.
@@ -53,7 +52,6 @@ Sticky conversion never uses Incoming. A short-lived KV flag suppresses the Jira
 
 ## KV keys
 
-- `jira-card:<issue>` — native Jira card Miro item ID.
 - `custom-card:<issue>` — custom image card Miro item ID (legacy group IDs are still supported).
 - `reporter-account:<miro-user-id>` — cached Jira Reporter account ID.
 - `conversion-freeze:<issue>` — prevents a conversion status transition from moving the new card.
