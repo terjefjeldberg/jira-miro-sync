@@ -227,9 +227,22 @@ async function processJiraWebhookBody(body, env) {
   const customRefresh = needsCardRefresh(body)
     ? await refreshCard(env, issueKey)
     : { ok: true, refreshed: false, skipped: 'status-only-webhook' };
-  console.log('Jira to Miro refresh finished', { elapsedMs: Date.now() - startedAt, skipped: customRefresh.skipped ?? null });
+  console.log('Jira to Miro refresh finished', {
+    elapsedMs: Date.now() - startedAt,
+    ok: customRefresh.ok !== false,
+    stage: customRefresh.stage ?? null,
+    status: customRefresh.miroStatus ?? customRefresh.jiraStatus ?? null,
+    skipped: customRefresh.skipped ?? null,
+  });
   const custom = await moveMappedItemToStatus(env, String(customId), status);
-  console.log('Jira to Miro processing finished', { elapsedMs: Date.now() - startedAt, moved: Boolean(custom?.moved), refreshSkipped: customRefresh.skipped ?? null });
+  console.log('Jira to Miro processing finished', {
+    elapsedMs: Date.now() - startedAt,
+    ok: custom.ok !== false && customRefresh.ok !== false,
+    moved: Boolean(custom?.moved),
+    stage: custom.stage ?? null,
+    status: custom.miroStatus ?? null,
+    refreshSkipped: customRefresh.skipped ?? null,
+  });
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
     const incomingCreate = await createIncomingCard(env, issueKey);
