@@ -56,6 +56,25 @@ export async function requireMiro(request, env) {
   return verifyMiroToken(auth.slice(7).trim(), env.MIRO_CLIENT_SECRET);
 }
 
-export function requireJiraWebhook(request, env) {
-  return Boolean(env.JIRA_WEBHOOK_SECRET) && (request.headers.get('X-Webhook-Secret') || '') === env.JIRA_WEBHOOK_SECRET;
+function signatureBytes(value) {
+  const raw = String(value ?? '').trim();
+  if (/^[0-9a-f]{64}$/i.test(raw)) return Uint8Array.from(raw.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+  return base64UrlBytes(raw);
+}
+
+async function verifyJiraSignature(signature, body, secret) {
+  const [method, digest] = String(signature ?? '').split('=', 2);
+  if (method !== 'sha256' || !digest) return false;
+  try {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    return await crypto.subtle.verify('HMAC', key, signatureBytes(digest), new TextEncoder().encode(body));
+  } catch {
+    return false;
+  }
+}
+
+export async function requireJiraWebhook(request, env, body = '') {
+  if (!env.JIRA_WEBHOOK_SECRET) return false;
+  if ((request.headers.get('X-Webhook-Secret') || '') === env.JIRA_WEBHOOK_SECRET) return true;
+  return verifyJiraSignature(request.headers.get('X-Hub-Signature'), body, env.JIRA_WEBHOOK_SECRET);
 }

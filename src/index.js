@@ -236,10 +236,11 @@ async function processJiraWebhookBody(body, env) {
 
 async function jiraWebhook(request, env) {
   if (!env.JIRA_WEBHOOK_SECRET) return json({ ok: false, reason: 'JIRA_WEBHOOK_SECRET is not configured' }, 500);
-  if (!requireJiraWebhook(request, env)) return json({ ok: false, reason: 'Invalid Jira webhook secret' }, 401);
+  const rawBody = await request.clone().text();
+  if (!(await requireJiraWebhook(request, env, rawBody))) return json({ ok: false, reason: 'Invalid Jira webhook secret' }, 401);
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const body = parsed.body;
-  const issueKey = normalizeIssueKey(body.issueKey);
+  const issueKey = normalizeIssueKey(body.issueKey ?? body.issue?.key);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
 
   // When the Queue binding exists, acknowledge Jira immediately and let the
@@ -247,7 +248,7 @@ async function jiraWebhook(request, env) {
   // existing synchronous path remains active as a safe fallback.
   if (env.JIRA_WEBHOOK_QUEUE && typeof env.JIRA_WEBHOOK_QUEUE.send === 'function') {
     try {
-      await env.JIRA_WEBHOOK_QUEUE.send({ ...body, issueKey, queuedAt: new Date().toISOString() });
+      await env.JIRA_WEBHOOK_QUEUE.send({ ...body, issueKey, status: body.status ?? body.issue?.fields?.status?.name ?? '', queuedAt: new Date().toISOString() });
       return json({ ok: true, accepted: true, queued: true, issueKey }, 202);
     } catch (error) {
       console.error('Failed to enqueue Jira webhook', error);

@@ -207,4 +207,26 @@ function token(secret) {
   globalThis.fetch = oldFetch;
 }
 
+// Jira comment_deleted webhooks use issue.key and X-Hub-Signature. They must
+// enter the same queue as the existing Jira Automation status webhooks.
+{
+  const secret = 'webhook-secret';
+  const kv = new FakeKv();
+  const queued = [];
+  const env = { ...baseEnv, CARD_MAP: kv, JIRA_WEBHOOK_SECRET: secret, JIRA_WEBHOOK_QUEUE: { send: async body => queued.push(body) } };
+  const payload = JSON.stringify({ webhookEvent: 'comment_deleted', issue: { key: 'SN-7', fields: { status: { name: 'In progress' } } }, comment: { id: 'comment-7' } });
+  const signature = `sha256=${createHmac('sha256', secret).update(payload).digest('base64url')}`;
+  const response = await worker.fetch(new Request('https://worker.test/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Hub-Signature': signature },
+    body: payload,
+  }), env);
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(body.issueKey, 'SN-7');
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].webhookEvent, 'comment_deleted');
+  assert.equal(queued[0].issueKey, 'SN-7');
+}
+
 console.log('Critical flow verification passed.');
