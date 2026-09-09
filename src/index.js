@@ -5,6 +5,16 @@ import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
+function changedWebhookFields(body) {
+  const items = Array.isArray(body?.changelog?.items) ? body.changelog.items : [];
+  return items.map(item => String(item?.field ?? '').trim().toLowerCase()).filter(Boolean);
+}
+
+function needsCardRefresh(body) {
+  const fields = changedWebhookFields(body);
+  return !fields.length || fields.some(field => field !== 'status' && field !== 'statuscategory');
+}
+
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
 }
@@ -209,10 +219,11 @@ async function processJiraWebhookBody(body, env) {
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
-  // Replacing the SVG can also affect image item metadata in Miro. Refresh the
-  // resource first and make the position update the final write, so a Jira
-  // status change always leaves the card in the intended column.
-  const customRefresh = await refreshCard(env, issueKey);
+  // Status is represented by the card's column, not its SVG content. Keep the
+  // full refresh for other field changes and unknown webhook formats.
+  const customRefresh = needsCardRefresh(body)
+    ? await refreshCard(env, issueKey)
+    : { ok: true, refreshed: false, skipped: 'status-only-webhook' };
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));

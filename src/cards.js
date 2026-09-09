@@ -191,9 +191,11 @@ export async function refreshCard(env, issueKey) {
     return { ok: true, refreshed: false, mapped: false, missing: true };
   }
 
-  const data = await getCardData(env, issueKey);
+  const [data, comments] = await Promise.all([
+    getCardData(env, issueKey),
+    listIssueComments(env, issueKey),
+  ]);
   if (!data.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-jira', jiraStatus: data.status, error: data.error };
-  const comments = await listIssueComments(env, issueKey);
   if (!comments.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-comments', jiraStatus: comments.status, error: comments.error };
   data.commentCount = comments.total;
   const result = await replaceSvg(env, itemId, issueKey, cardSvg(data));
