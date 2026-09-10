@@ -266,10 +266,16 @@ export default {
       try {
         response = await processJiraWebhookBody(message.body ?? {}, env);
       } catch (error) {
-        console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error' });
+        console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error', message: error?.message ?? String(error), stack: error?.stack ?? '' });
         throw error;
       }
       if (response.status >= 500) {
+        const details = await response.clone().json().catch(() => null);
+        console.error('Jira webhook processing failed', {
+          issueKey: String(message.body?.issueKey ?? '').trim(),
+          status: response.status,
+          details,
+        });
         throw new Error(`Jira webhook processing failed with HTTP ${response.status}`);
       }
     }
