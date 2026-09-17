@@ -35,7 +35,7 @@ The Miro app watches card/image movement. After debounce and the 60% column-over
 
 - `POST /custom-miro-to-jira` for custom image cards.
 
-Jira rejection causes a Miro rollback. Moving to Functional review is rejected when Test area is empty.
+Jira rejection causes a Miro rollback. Required fields are enforced by Jira transition validators for each work type.
 
 ### Sticky → Jira
 
@@ -79,14 +79,14 @@ Optional overrides (current dev values are defaults):
 - `MIRO_INCOMING_FRAME_ID`
 - `WORKFLOW_LAYOUT_JSON`
 - `STATUS_OVERLAP_THRESHOLD`
-- `JIRA_FIELD_TEST_AREA`
 - `JIRA_FIELD_ORIGINAL_MIRO_CREATED`
 - `JIRA_FIELD_BUG_REPRO`
 - `JIRA_FIELD_BUG_CUSTOMER`
+- `JIRA_FIELD_FUNCTIONAL_AREA`
+- `JIRA_FIELD_TEST_DESCRIPTION`
 - `JIRA_FIELD_NF_DROPDOWN_1`
 - `JIRA_FIELD_NF_TEXT_1`
 - `JIRA_FIELD_NF_TEXT_2`
-- `JIRA_FIELD_NF_DROPDOWN_2`
 - `JIRA_FIELD_TASK_REQUIRED`
 
 For production migration, create a separate Worker/KV namespace and set these variables to production values. No code fork should be necessary.
@@ -101,7 +101,7 @@ Useful checks after a change:
 2. Jira-created issue creates exactly one Incoming card.
 3. Jira status change moves the mapped card and preserves Y.
 4. Miro drag changes Jira status; rejection rolls back.
-5. Functional review gate still rejects missing Test area.
+5. Functional review rejects missing required fields for the current work type and Miro rolls the card back.
 6. Sticky conversion preserves exact position, Reporter, original timestamp and required defaults.
 7. Multi-select conversion continues after an individual failure.
 8. Jira field changes refresh the custom-card SVG.
@@ -114,7 +114,7 @@ Run these against a separately deployed refactor Worker before changing `main`:
 2. Create one Jira issue and verify one — and only one — Incoming card.
 3. Change that Jira issue through every approved status and verify X movement with Y preserved.
 4. Drag a custom card through every column and verify Jira follows the 60% rule.
-5. Attempt Functional review with empty Test area and verify rollback; fill Test area and retry.
+5. Attempt Functional review with the required fields empty for Bug, Improvement, New Feature and Task/config/doc/test; verify rollback, then fill the fields and retry.
 6. Change summary, priority and assignee in Jira and verify the existing Miro card refreshes without duplication.
 7. Convert one sticky outside the workflow board and verify exact position + default Jira status.
 8. Convert one sticky in each workflow column and verify exact position + inherited Jira status.

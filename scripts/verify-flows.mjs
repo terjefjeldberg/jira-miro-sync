@@ -27,27 +27,33 @@ const baseEnv = {
   MIRO_TOKEN: 'miro-token',
 };
 
-// Normal drag to Functional review must keep the Test area gate.
+// Normal drag to Functional review delegates required-field validation to Jira.
 {
   const oldFetch = globalThis.fetch;
-  globalThis.fetch = async url => {
-    assert.match(String(url), /\/issue\/SN-1\?fields=status,customfield_10832$/);
-    return json({ fields: { status: { name: 'In progress' }, customfield_10832: null } });
+  globalThis.fetch = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith('/issue/SN-1?fields=status')) return json({ fields: { status: { name: 'In progress' } } });
+    if (value.endsWith('/issue/SN-1/transitions') && !init.method) return json({ transitions: [
+      { id: '11', name: 'Move to Functional review', to: { name: 'Functional review' } },
+    ] });
+    if (value.endsWith('/issue/SN-1/transitions') && init.method === 'POST') return new Response('Required fields are missing', { status: 400 });
+    throw new Error(`Unexpected fetch ${value}`);
   };
   const result = await transitionIssue(baseEnv, 'SN-1', 'Functional review');
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'TEST_AREA_REQUIRED');
+  assert.equal(result.reason, undefined);
+  assert.equal(result.rejected, true);
+  assert.equal(result.stage, 'transition');
   globalThis.fetch = oldFetch;
 }
 
-// Sticky conversion deliberately bypasses that gate and may use the first Jira
-// transition to the requested status.
+// Sticky conversion may use the first Jira transition to the requested status.
 {
   const oldFetch = globalThis.fetch;
   let transitioned = false;
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
-    if (value.includes('/issue/SN-2?fields=status,customfield_10832')) return json({ fields: { status: { name: 'Todo' }, customfield_10832: null } });
+    if (value.includes('/issue/SN-2?fields=status')) return json({ fields: { status: { name: 'Todo' } } });
     if (value.endsWith('/issue/SN-2/transitions') && !init.method) return json({ transitions: [
       { id: '11', name: 'Transition A', to: { name: 'Functional review' } },
       { id: '12', name: 'Transition B', to: { name: 'Functional review' } },
@@ -55,7 +61,7 @@ const baseEnv = {
     if (value.endsWith('/issue/SN-2/transitions') && init.method === 'POST') { transitioned = true; return new Response(null, { status: 204 }); }
     throw new Error(`Unexpected fetch ${value}`);
   };
-  const result = await transitionIssue(baseEnv, 'SN-2', 'Functional review', { enforceTestArea: false, firstMatchingTransition: true });
+  const result = await transitionIssue(baseEnv, 'SN-2', 'Functional review', { firstMatchingTransition: true });
   assert.equal(result.ok, true);
   assert.equal(result.transitionId, '11');
   assert.equal(transitioned, true);
@@ -193,7 +199,7 @@ function token(secret) {
   const env = { ...baseEnv, CARD_MAP: kv, MIRO_CLIENT_SECRET: secret };
   const oldFetch = globalThis.fetch;
   globalThis.fetch = async url => {
-    if (String(url).includes('/issue/SN-6?fields=status,customfield_10832')) return json({ fields: { status: { name: 'Todo' }, customfield_10832: null } });
+    if (String(url).includes('/issue/SN-6?fields=status')) return json({ fields: { status: { name: 'Todo' } } });
     throw new Error(`Unexpected fetch ${url}`);
   };
   const response = await worker.fetch(new Request('https://worker.test/conversion-set-status', {

@@ -53,18 +53,15 @@ export async function getCardData(env, issueKey) {
   };
 }
 
-export async function transitionIssue(env, issueKey, desiredStatus, { enforceTestArea = true, firstMatchingTransition = false } = {}) {
+export async function transitionIssue(env, issueKey, desiredStatus, { firstMatchingTransition = false } = {}) {
   const cfg = config(env);
   const normalized = normalizeStatus(desiredStatus);
   const allowed = new Set(cfg.layout.columns.map(column => normalizeStatus(column.status)));
   if (!allowed.has(normalized)) return { ok: true, changed: false, ignored: true, reason: `Unapproved status: ${desiredStatus}` };
 
-  const read = await getIssue(env, issueKey, ['status', cfg.fields.testArea]);
+  const read = await getIssue(env, issueKey, ['status']);
   if (!read.ok) return { ok: false, status: 502, stage: 'read-current-status', jiraStatus: read.status, error: read.error };
   const currentStatus = String(read.issue?.fields?.status?.name ?? '');
-  if (enforceTestArea && normalized === 'functional review' && !meaningful(read.issue?.fields?.[cfg.fields.testArea])) {
-    return { ok: false, status: 409, changed: false, rejected: true, reason: 'TEST_AREA_REQUIRED', issueKey, currentStatus, desiredStatus, fieldId: cfg.fields.testArea, message: 'Test area must be filled in before moving to Functional review.' };
-  }
   if (normalizeStatus(currentStatus) === normalized) return { ok: true, changed: false, issueKey, currentStatus, desiredStatus, reason: 'Jira already has desired status' };
 
   const transitionsResponse = await request(env, `/issue/${encodeURIComponent(issueKey)}/transitions`);
@@ -132,21 +129,18 @@ export async function createIssueFromSticky(env, summary, workType) {
   }
 
   if (workType === 'New Feature' || workType === 'Improvement') {
-    const ids = [cfg.fields.nfDropdown1, cfg.fields.nfText1, cfg.fields.nfText2, cfg.fields.nfDropdown2];
+    const ids = [cfg.fields.nfDropdown1, cfg.fields.nfText1, cfg.fields.nfText2];
     const found = Object.fromEntries(ids.map(id => [id, createField(fields, id)]));
     const missing = ids.filter(id => !found[id]);
     if (missing.length) return { ok: false, status: 409, stage: 'find-new-feature-improvement-fields', reason: 'One or more required sticky-conversion fields were not found in Jira create metadata', workType, missingFieldIds: missing };
     const first = option(found[cfg.fields.nfDropdown1], DEFAULT_TEXT);
-    const second = option(found[cfg.fields.nfDropdown2], DEFAULT_TEXT);
-    if (!first?.id || !second?.id) return { ok: false, status: 409, stage: 'find-new-feature-improvement-dropdown-option', reason: `Dropdown option "${DEFAULT_TEXT}" was not found`, workType };
+    if (!first?.id) return { ok: false, status: 409, stage: 'find-new-feature-improvement-dropdown-option', reason: `Dropdown option "${DEFAULT_TEXT}" was not found`, workType };
     createFields[cfg.fields.nfDropdown1] = { id: String(first.id) };
     createFields[cfg.fields.nfText1] = textValue(found[cfg.fields.nfText1], DEFAULT_TEXT);
     createFields[cfg.fields.nfText2] = textValue(found[cfg.fields.nfText2], DEFAULT_TEXT);
-    createFields[cfg.fields.nfDropdown2] = { id: String(second.id) };
     applied[cfg.fields.nfDropdown1] = DEFAULT_TEXT;
     applied[cfg.fields.nfText1] = DEFAULT_TEXT;
     applied[cfg.fields.nfText2] = DEFAULT_TEXT;
-    applied[cfg.fields.nfDropdown2] = DEFAULT_TEXT;
   }
 
   if (workType === 'Task/config/doc/test') {

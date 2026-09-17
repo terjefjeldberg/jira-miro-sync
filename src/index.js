@@ -68,7 +68,7 @@ async function miroToJira(request, env) {
     return json({ ok: true, changed: false, issueKey, itemId, currentStatus: live.status, desiredStatus, reason: 'Jira already has desired status' });
   }
 
-  const result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: true });
+  const result = await transitionIssue(env, issueKey, desiredStatus);
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 500));
 }
 
@@ -145,7 +145,7 @@ async function setConversionStatus(request, env) {
   let result;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt) await new Promise(resolve => setTimeout(resolve, attempt * 500));
-    result = await transitionIssue(env, issueKey, desiredStatus, { enforceTestArea: false, firstMatchingTransition: true });
+    result = await transitionIssue(env, issueKey, desiredStatus, { firstMatchingTransition: true });
     if (result.ok) break;
   }
   if (!result.ok) {
@@ -286,7 +286,7 @@ export default {
     if (method === 'OPTIONS') return preflight();
     if (method === 'GET' && path === '/health') {
       const cfg = config(env);
-      return json({ ok: true, cardMapConfigured: Boolean(env.CARD_MAP), jiraWebhookQueueConfigured: Boolean(env.JIRA_WEBHOOK_QUEUE), miroClientSecretConfigured: Boolean(env.MIRO_CLIENT_SECRET), miroTokenConfigured: Boolean(env.MIRO_TOKEN), miroBoardConfigured: Boolean(env.MIRO_BOARD_ID), jiraTokenConfigured: Boolean(env.JIRA_API_TOKEN), jiraCloudIdConfigured: Boolean(env.JIRA_CLOUD_ID), jiraWebhookSecretConfigured: Boolean(env.JIRA_WEBHOOK_SECRET), projectKey: cfg.jiraProjectKey, incomingFrameId: cfg.incomingFrameId, testAreaField: cfg.fields.testArea });
+      return json({ ok: true, cardMapConfigured: Boolean(env.CARD_MAP), jiraWebhookQueueConfigured: Boolean(env.JIRA_WEBHOOK_QUEUE), miroClientSecretConfigured: Boolean(env.MIRO_CLIENT_SECRET), miroTokenConfigured: Boolean(env.MIRO_TOKEN), miroBoardConfigured: Boolean(env.MIRO_BOARD_ID), jiraTokenConfigured: Boolean(env.JIRA_API_TOKEN), jiraCloudIdConfigured: Boolean(env.JIRA_CLOUD_ID), jiraWebhookSecretConfigured: Boolean(env.JIRA_WEBHOOK_SECRET), projectKey: cfg.jiraProjectKey, incomingFrameId: cfg.incomingFrameId, functionalAreaField: cfg.fields.functionalArea, testDescriptionField: cfg.fields.testDescription, customerField: cfg.fields.bugCustomer, taskRequiredField: cfg.fields.taskRequired });
     }
     if (method === 'GET' && path === '/miro-app') return renderApp();
     if (method === 'GET' && path === '/app.js') return renderAppClient(env);
