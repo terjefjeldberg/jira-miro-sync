@@ -48,6 +48,28 @@ async function register(request, env) {
   return json({ ok: true, registered: mappings.length, mappings });
 }
 
+async function reconcileCustomCards(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const boardId = String(parsed.body.boardId ?? '').trim();
+  if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
+    .slice(0, 100)
+    .map(entry => ({ issueKey: normalizeIssueKey(entry?.issueKey), itemId: String(entry?.itemId ?? '').trim() }))
+    .filter(entry => issueKeyIsValid(entry.issueKey, env) && entry.itemId);
+  const results = [];
+  for (const entry of entries) {
+    const live = await getCardData(env, entry.issueKey);
+    if (!live.ok) {
+      results.push({ ...entry, ok: false, stage: 'jira-read', status: live.status, error: live.error });
+      continue;
+    }
+    const moved = await moveMappedItemToStatus(env, entry.itemId, live.status);
+    results.push({ ...entry, jiraStatus: live.status, ...moved });
+  }
+  return json({ ok: results.every(result => result.ok !== false), reconciled: results.length, results });
+}
+
 async function miroToJira(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
@@ -109,7 +131,7 @@ async function jiraComments(request, env) {
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
 }
 
-async function addJiraComment(request, env) {
+async function addJiraComment(request, env, ctx) {
   const auth = await requireMiro(request, env);
   if (!auth) return json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
@@ -123,7 +145,11 @@ async function addJiraComment(request, env) {
   const author = (await resolveMiroCommentAuthor(env, auth)) || 'Miro user';
   const comment = `${author} via Miro:\n\n${rawComment}`;
   const result = await addIssueComment(env, issueKey, comment);
-  if (result.ok) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
+  if (result.ok) {
+    const sync = () => syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
+    if (ctx?.waitUntil) ctx.waitUntil(sync());
+    else await sync();
+  }
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
 }
 
@@ -281,7 +307,7 @@ export default {
     }
   },
 
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url), method = request.method, path = url.pathname;
     if (method === 'OPTIONS') return preflight();
     if (method === 'GET' && path === '/health') {
@@ -296,8 +322,9 @@ export default {
     if (method === 'GET' && path === '/jira-comments-modal') return renderCommentsModal();
      if (method === 'GET' && path === '/jira-card-menu') return renderCardMenu();
     if (method === 'GET' && path === '/jira-comments') return jiraComments(request, env);
-    if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env);
+    if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env, ctx);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
+    if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
     if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env);

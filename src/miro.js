@@ -116,12 +116,8 @@ function overlap(centerX, width, column) {
 const COLLISION_OVERLAP_LIMIT = 0.95;
 const COLLISION_STEP = 12;
 const COLLISION_DIRECTIONS = [
-  { x: 1, y: 1 },
-  { x: -1, y: 1 },
-  { x: 1, y: -1 },
-  { x: -1, y: -1 },
-  { x: 0, y: 1 },
-  { x: 0, y: -1 },
+  { x: 1, y: 0 },
+  { x: -1, y: 0 },
 ];
 const workflowParentCache = new Map();
 const WORKFLOW_PARENT_CACHE_TTL_MS = 60_000;
@@ -178,9 +174,8 @@ async function collisionFreePosition(env, item, base, target, mode) {
   const normal = { x: base.x, y: base.y };
   if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
 
-  // Search one direction at a time. This keeps a stack moving consistently
-  // down/right until the 60% status boundary is reached, then tries the
-  // opposite XY directions instead of switching sideways after one collision.
+  // Search horizontally only. A Jira status change may adjust X to avoid a
+  // collision, but must preserve the user's Y position.
   for (const direction of COLLISION_DIRECTIONS) {
     for (let radius = 1; radius <= 24; radius += 1) {
       const offset = { x: direction.x * COLLISION_STEP * radius, y: direction.y * COLLISION_STEP * radius };

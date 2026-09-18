@@ -31,7 +31,7 @@ function isHotfixCandidate(value) {
       ? item
       : item?.value ?? item?.name ?? item?.label ?? item?.selected ?? '';
     const normalized = String(option).trim().toLowerCase();
-    return normalized === 'hotfix' || normalized === 'true' || normalized === 'checked';
+    return ['hotfix', 'hotfix candidate', 'true', 'checked', 'yes', 'on', '1'].includes(normalized);
   });
 }
 
@@ -72,14 +72,43 @@ export async function transitionIssue(env, issueKey, desiredStatus, { firstMatch
   const selected = firstMatchingTransition
     ? destinations[0] || null
     : preferred.length === 1 ? preferred[0] : preferred.length === 0 && destinations.length === 1 ? destinations[0] : null;
-  if (!selected?.id) return { ok: false, status: 409, changed: false, reason: 'No unique approved Jira transition found', issueKey, currentStatus, desiredStatus };
+  if (!selected?.id) {
+    console.error('No unique Jira transition found', {
+      issueKey,
+      currentStatus,
+      desiredStatus,
+      availableTransitions: transitions.map(transition => ({
+        id: String(transition?.id ?? ''),
+        name: String(transition?.name ?? ''),
+        to: String(transition?.to?.name ?? ''),
+      })),
+      matchingDestinations: destinations.map(transition => ({
+        id: String(transition?.id ?? ''),
+        name: String(transition?.name ?? ''),
+        to: String(transition?.to?.name ?? ''),
+      })),
+    });
+    return { ok: false, status: 409, changed: false, reason: 'No unique approved Jira transition found', issueKey, currentStatus, desiredStatus };
+  }
 
   const response = await request(env, `/issue/${encodeURIComponent(issueKey)}/transitions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transition: { id: String(selected.id) } }),
   });
-  if (!response.ok) return { ok: false, status: response.status >= 400 && response.status < 500 ? 409 : 502, changed: false, rejected: true, stage: 'transition', jiraStatus: response.status, issueKey, currentStatus, desiredStatus, error: await response.text() };
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Jira rejected transition', {
+      issueKey,
+      currentStatus,
+      desiredStatus,
+      transitionId: String(selected.id),
+      transitionName: String(selected.name ?? ''),
+      jiraStatus: response.status,
+      error,
+    });
+    return { ok: false, status: response.status >= 400 && response.status < 500 ? 409 : 502, changed: false, rejected: true, stage: 'transition', jiraStatus: response.status, issueKey, currentStatus, desiredStatus, error };
+  }
   return { ok: true, changed: true, issueKey, fromStatus: currentStatus, toStatus: desiredStatus, transitionId: selected.id, transitionName: selected.name };
 }
 
