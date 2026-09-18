@@ -1,6 +1,6 @@
 # Architecture
 
-This Worker synchronizes Jira issues and custom Miro image cards for the SN project.
+This Worker synchronizes Jira issues and custom Miro image cards for the ROV project.
 
 ## Runtime flow
 
@@ -9,7 +9,7 @@ This Worker synchronizes Jira issues and custom Miro image cards for the SN proj
 1. Jira Automation sends a `POST /` request with `X-Webhook-Secret`.
 2. `src/index.js` validates the request and reads the live Jira status.
 3. The Worker resolves the custom-card mapping from KV.
-4. If the mapping is missing, it scans Miro images for the card title `CUSTOM_JIRA_CARD:SN-123` and repairs the KV mapping.
+4. If the mapping is missing, it scans Miro images for the card title `CUSTOM_JIRA_CARD:ROV-123` and repairs the KV mapping.
 5. `src/cards.js` refreshes the SVG content.
 6. `src/miro.js` moves the image to the mapped workflow column and preserves Y.
 
@@ -59,7 +59,7 @@ Run locally:
 npm run verify
 ```
 
-A successful push to `main` runs verification and deploys the production Worker through `.github/workflows/verify.yml`.
+A successful push to `main` runs verification and deploys the production Worker defined by `wrangler.prod.toml` through `.github/workflows/verify.yml`.
 
 When changing the Miro client, preserve:
 

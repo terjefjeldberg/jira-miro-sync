@@ -89,6 +89,9 @@ Optional overrides (current dev values are defaults):
 - `JIRA_FIELD_NF_TEXT_1`
 - `JIRA_FIELD_NF_TEXT_2`
 - `JIRA_FIELD_TASK_REQUIRED`
+- `JIRA_FIELD_HOTFIX_CANDIDATE`
+
+Production currently uses project key `ROV`, Worker `jira-to-miro-prod` and queue `jira-to-miro-prod-events`.
 
 For production migration, create a separate Worker/KV namespace and set these variables to production values. No code fork should be necessary.
 
@@ -107,9 +110,9 @@ Useful checks after a change:
 7. Multi-select conversion continues after an individual failure.
 8. Jira field changes refresh the custom-card SVG.
 
-## Live verification order before merge
+## Live verification order
 
-Run these against a separately deployed refactor Worker before changing `main`:
+Run these against the production Worker after a verified deployment:
 
 1. Open the Miro app and confirm `/health`, panel opening and existing-card discovery.
 2. Create one Jira issue and verify one — and only one — Incoming card.
@@ -124,11 +127,9 @@ Run these against a separately deployed refactor Worker before changing `main`:
 11. Create an issue directly in Jira while sticky conversion is happening and verify the Jira-created issue still goes to Incoming while the sticky-originated issue does not.
 12. Verify Reporter, Original Miro created and required work-type defaults for Bug, Improvement, New Feature and Task/config/doc/test.
 
-Only after this list passes should the refactor replace `main`.
-
 ## Safe rollback
 
-The pre-refactor working snapshot is preserved on branch `backup/pre-refactor-2026-08-31`.
+The previous production snapshot remains available in Git history for rollback.
 ## Developer guide
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the runtime flows, module responsibilities, required secrets and safe Miro-client change points.
