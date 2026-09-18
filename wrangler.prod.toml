@@ -1,0 +1,24 @@
+name = "jira-to-miro-prod"
+main = "src/index.js"
+compatibility_date = "2026-08-24"
+keep_vars = true
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+
+[[kv_namespaces]]
+binding = "CARD_MAP"
+id = "399fc877c8584dc3995a1bb39cc6dd23"
+
+[[queues.producers]]
+binding = "JIRA_WEBHOOK_QUEUE"
+queue = "jira-to-miro-prod-events"
+
+[[queues.consumers]]
+queue = "jira-to-miro-prod-events"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 5
