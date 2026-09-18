@@ -213,6 +213,8 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   if (!read.found) return { ok: true, mapped: false, moved: false, missing: true };
   const item = read.item;
   if (String(item?.type ?? '') !== 'image' || !issueKeyFromImage(item)) return { ok: true, mapped: false, moved: false, missing: true, unsupported: true };
+  const incomingParentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
+  if (incomingParentId && incomingParentId === cfg.incomingFrameId) return { ok: true, mapped: true, moved: false, parked: true, reason: 'Incoming card requires manual placement' };
 
   const width = Number(item?.geometry?.width ?? item?.width);
   const rawX = Number(item?.position?.x ?? item?.x), rawY = Number(item?.position?.y ?? item?.y);

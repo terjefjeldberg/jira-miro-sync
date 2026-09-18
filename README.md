@@ -27,7 +27,8 @@ There are no patch-on-patch wrapper files. A behavior should have one implementa
 3. looks up custom-card mappings in KV;
 4. refreshes custom-card content;
 5. moves mapped cards horizontally while preserving Y;
-6. creates an Incoming custom card only when a Jira-created issue has no mapping.
+6. creates an Incoming custom card only when a Jira-created issue has no mapping;
+7. leaves cards in Incoming parked until a user manually places them on the workflow board.
 
 ### Miro card → Jira status
 
