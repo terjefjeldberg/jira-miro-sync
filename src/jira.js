@@ -314,16 +314,27 @@ export async function applyReporter(env, issueKey, reporter) {
 
 function jiraDate(value) {
   const date = new Date(String(value ?? ''));
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().replace(/Z$/, '+0000');
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+}
+
+async function resolveOriginalMiroCreatedField(env, configuredId) {
+  if (env.JIRA_FIELD_ORIGINAL_MIRO_CREATED) return configuredId;
+  const response = await request(env, '/field');
+  if (!response.ok) return configuredId;
+  const fields = await response.json();
+  const wanted = 'original miro created';
+  const match = (Array.isArray(fields) ? fields : []).find(field => String(field?.name ?? '').trim().toLowerCase() === wanted);
+  return String(match?.id ?? configuredId).trim();
 }
 
 export async function applyStickyMetadata(env, issueKey, reporter) {
   const cfg = config(env);
   const created = jiraDate(reporter.createdAt);
-  if (!created) return { ok: true, skipped: true, reason: 'Original Miro timestamp unavailable' };
-  const response = await request(env, `/issue/${encodeURIComponent(issueKey)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { [cfg.fields.originalMiroCreated]: created } }) });
+  if (!created) return { ok: false, status: 409, stage: 'original-miro-created-source', reason: 'Miro sticky did not provide a valid createdAt date' };
+  const fieldId = await resolveOriginalMiroCreatedField(env, cfg.fields.originalMiroCreated);
+  const response = await request(env, `/issue/${encodeURIComponent(issueKey)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { [fieldId]: created } }) });
   if (!response.ok) return { ok: false, stage: 'original-miro-created-jira-update', reason: `Jira rejected Original Miro created update with HTTP ${response.status}`, error: await response.text() };
-  return { ok: true, reporter: reporter.creatorName, originalMiroCreated: created };
+  return { ok: true, reporter: reporter.creatorName, fieldId, originalMiroCreated: created };
 }
 
 export async function listIssueComments(env, issueKey) {
