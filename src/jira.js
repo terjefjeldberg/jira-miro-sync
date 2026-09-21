@@ -121,12 +121,6 @@ function option(field, value) {
   return (Array.isArray(field?.allowedValues) ? field.allowedValues : []).find(item => String(item?.value ?? item?.name ?? '').trim().toLowerCase() === wanted) || null;
 }
 
-function textValue(field, text) {
-  const schema = String(field?.schema?.type ?? '').toLowerCase();
-  const custom = String(field?.schema?.custom ?? '').toLowerCase();
-  return schema === 'doc' || custom.includes(':textarea') ? adf(text) : text;
-}
-
 export async function createIssueFromSticky(env, summary, workType) {
   const cfg = config(env);
   summary = String(summary ?? '').replace(/\s+/g, ' ').trim();
@@ -155,28 +149,6 @@ export async function createIssueFromSticky(env, summary, workType) {
     createFields[cfg.fields.bugCustomer] = { id: String(selected.id) };
     applied.reproSteps = { fieldId: cfg.fields.bugRepro, value: `${DEFAULT_TEXT}.` };
     applied.customer = { fieldId: cfg.fields.bugCustomer, optionId: String(selected.id), value: selected.value ?? selected.name ?? DEFAULT_TEXT };
-  }
-
-  if (workType === 'New Feature' || workType === 'Improvement') {
-    const ids = [cfg.fields.nfDropdown1, cfg.fields.nfText1, cfg.fields.nfText2];
-    const found = Object.fromEntries(ids.map(id => [id, createField(fields, id)]));
-    const missing = ids.filter(id => !found[id]);
-    if (missing.length) return { ok: false, status: 409, stage: 'find-new-feature-improvement-fields', reason: 'One or more required sticky-conversion fields were not found in Jira create metadata', workType, missingFieldIds: missing };
-    const first = option(found[cfg.fields.nfDropdown1], DEFAULT_TEXT);
-    if (!first?.id) return { ok: false, status: 409, stage: 'find-new-feature-improvement-dropdown-option', reason: `Dropdown option "${DEFAULT_TEXT}" was not found`, workType };
-    createFields[cfg.fields.nfDropdown1] = { id: String(first.id) };
-    createFields[cfg.fields.nfText1] = textValue(found[cfg.fields.nfText1], DEFAULT_TEXT);
-    createFields[cfg.fields.nfText2] = textValue(found[cfg.fields.nfText2], DEFAULT_TEXT);
-    applied[cfg.fields.nfDropdown1] = DEFAULT_TEXT;
-    applied[cfg.fields.nfText1] = DEFAULT_TEXT;
-    applied[cfg.fields.nfText2] = DEFAULT_TEXT;
-  }
-
-  if (workType === 'Task/config/doc/test') {
-    const field = createField(fields, cfg.fields.taskRequired);
-    if (!field) return { ok: false, status: 409, stage: 'find-task-required-field', reason: `Required field ${cfg.fields.taskRequired} was not found`, workType };
-    createFields[cfg.fields.taskRequired] = textValue(field, DEFAULT_TEXT);
-    applied[cfg.fields.taskRequired] = DEFAULT_TEXT;
   }
 
   const response = await request(env, '/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: createFields }) });

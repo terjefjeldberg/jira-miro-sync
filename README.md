@@ -85,13 +85,10 @@ Optional overrides (current dev values are defaults):
 - `JIRA_FIELD_BUG_CUSTOMER`
 - `JIRA_FIELD_FUNCTIONAL_AREA`
 - `JIRA_FIELD_TEST_DESCRIPTION`
-- `JIRA_FIELD_NF_DROPDOWN_1`
-- `JIRA_FIELD_NF_TEXT_1`
-- `JIRA_FIELD_NF_TEXT_2`
-- `JIRA_FIELD_TASK_REQUIRED`
 - `JIRA_FIELD_HOTFIX_CANDIDATE`
 
 Production currently uses project key `ROV`, Worker `jira-to-miro-prod` and queue `jira-to-miro-prod-events`.
+Functional area and Test description are validated by the Jira transition to Functional Review, not during issue creation. Sticky creation only applies the Bug-specific defaults when the work type is Bug.
 
 For production migration, create a separate Worker/KV namespace and set these variables to production values. No code fork should be necessary.
 
