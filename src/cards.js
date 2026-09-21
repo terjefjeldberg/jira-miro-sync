@@ -127,12 +127,22 @@ export async function createDirectCard(env, issueKey, x, y) {
 async function dedupeIncoming(env, issueKey, createdItemId) {
   await new Promise(resolve => setTimeout(resolve, 700));
   const cfg = config(env);
-  const listed = await listItems(env, { parent_item_id: cfg.incomingFrameId });
+  // A competing webhook can move one duplicate out of Incoming before the
+  // old Incoming-only scan runs. Search the whole board so duplicates are
+  // removed regardless of their current workflow position.
+  const listed = await listItems(env, { type: 'image' });
   if (!listed.ok) return { keptItemId: createdItemId, removedItemIds: [] };
-  const ids = listed.items.filter(item => issueKeyFromImage(item) === issueKey).map(item => String(item.id)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const matches = listed.items.filter(item => issueKeyFromImage(item) === issueKey);
+  const ids = matches.map(item => String(item.id)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (ids.length <= 1) return { keptItemId: ids[0] || createdItemId, removedItemIds: [] };
-  const keep = ids[0], removed = [];
-  for (const id of ids.slice(1)) if (await deleteImage(env, id)) removed.push(id);
+  const mapped = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  const mappedMatch = mapped && matches.find(item => String(item.id) === mapped);
+  const outsideIncoming = matches
+    .filter(item => String(item?.parent?.id ?? item?.parentId ?? '').trim() !== cfg.incomingFrameId)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  const keep = String(mappedMatch?.id ?? outsideIncoming[0]?.id ?? ids[0]);
+  const removed = [];
+  for (const id of ids.filter(candidate => candidate !== keep)) if (await deleteImage(env, id)) removed.push(id);
   await env.CARD_MAP.put(customMapKey(issueKey), keep);
   return { keptItemId: keep, removedItemIds: removed };
 }
