@@ -53,6 +53,7 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     assert.match(source, /previousY/);
     assert.match(source, /rollback-custom-card/);
     assert.match(source, /previousParentId/);
+    assert.doesNotMatch(source, /rollbacks\.delete/);
     assert.doesNotMatch(source, /eventItem\?\{x:Number\(eventItem\.x\)/);
   }
 }
