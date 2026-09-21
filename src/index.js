@@ -116,7 +116,23 @@ async function stickyToJira(request, env) {
   const reporterUpdate = await applyReporter(env, created.issueKey, reporter);
   if (!reporterUpdate.ok) return json({ ...created, ok: false, reason: reporterUpdate.reason, reporterSync: reporterUpdate }, reporterUpdate.status || 409);
   const originalMiroCreatedSync = await applyStickyMetadata(env, created.issueKey, reporter);
-  if (!originalMiroCreatedSync.ok) return json({ ...created, ok: false, reason: originalMiroCreatedSync.reason, reporterSync: { ok: true, applied: true, miroCreatorId: reporter.creatorId, miroCreatorName: reporter.creatorName, jiraReporterAccountId: reporter.accountId, jiraReporterSource: reporter.source }, originalMiroCreatedSync }, originalMiroCreatedSync.status || 409);
+  if (!originalMiroCreatedSync.ok) {
+    let detail = '';
+    try {
+      const body = JSON.parse(String(originalMiroCreatedSync.error || '{}'));
+      detail = [...(Array.isArray(body.errorMessages) ? body.errorMessages : []), ...Object.values(body.errors || {})]
+        .map(value => String(value).trim())
+        .filter(Boolean)
+        .join(' ');
+    } catch {}
+    return json({
+      ...created,
+      ok: false,
+      reason: `${originalMiroCreatedSync.reason}${detail ? `: ${detail}` : ''}`,
+      reporterSync: { ok: true, applied: true, miroCreatorId: reporter.creatorId, miroCreatorName: reporter.creatorName, jiraReporterAccountId: reporter.accountId, jiraReporterSource: reporter.source },
+      originalMiroCreatedSync,
+    }, originalMiroCreatedSync.status || 409);
+  }
   return json({ ...created, reporterSync: { ok: true, applied: true, miroCreatorId: reporter.creatorId, miroCreatorName: reporter.creatorName, jiraReporterAccountId: reporter.accountId, jiraReporterSource: reporter.source }, originalMiroCreatedSync });
 }
 

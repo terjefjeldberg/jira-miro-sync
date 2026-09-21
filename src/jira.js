@@ -333,7 +333,18 @@ export async function applyStickyMetadata(env, issueKey, reporter) {
   if (!created) return { ok: false, status: 409, stage: 'original-miro-created-source', reason: 'Miro sticky did not provide a valid createdAt date' };
   const fieldId = await resolveOriginalMiroCreatedField(env, cfg.fields.originalMiroCreated);
   const response = await request(env, `/issue/${encodeURIComponent(issueKey)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { [fieldId]: created } }) });
-  if (!response.ok) return { ok: false, stage: 'original-miro-created-jira-update', reason: `Jira rejected Original Miro created update with HTTP ${response.status}`, error: await response.text() };
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Jira rejected Original Miro created update', { issueKey, fieldId, value: created, jiraStatus: response.status, error });
+    return {
+      ok: false,
+      status: response.status >= 400 && response.status < 500 ? 409 : 502,
+      stage: 'original-miro-created-jira-update',
+      reason: `Jira rejected Original Miro created update with HTTP ${response.status}`,
+      jiraStatus: response.status,
+      error,
+    };
+  }
   return { ok: true, reporter: reporter.creatorName, fieldId, originalMiroCreated: created };
 }
 
