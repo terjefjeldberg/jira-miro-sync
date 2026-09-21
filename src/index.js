@@ -2,7 +2,7 @@ import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, nor
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, listIssueComments, resolveMiroCommentAuthor, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
-import { issueKeyFromImage, listItems, moveMappedItemToStatus, registerMappings } from './miro.js';
+import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
 function changedWebhookFields(body) {
@@ -98,6 +98,29 @@ async function miroToJira(request, env) {
 
   const result = await transitionIssue(env, issueKey, desiredStatus);
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 500));
+}
+
+async function rollbackCustomCard(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const body = parsed.body;
+  const issueKey = normalizeIssueKey(body.issueKey);
+  const itemId = String(body.itemId ?? '').trim();
+  const previousParentId = String(body.previousParentId ?? '').trim();
+  const previousX = Number(body.previousX), previousY = Number(body.previousY);
+  if (!issueKeyIsValid(issueKey, env) || !itemId || !Number.isFinite(previousX) || !Number.isFinite(previousY)) {
+    return json({ ok: false, reason: 'Invalid rollback card or position' }, 400);
+  }
+  const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (mappedItemId && mappedItemId !== itemId) {
+    return json({ ok: true, changed: false, ignored: true, reason: 'A different Miro card is mapped to this Jira issue' });
+  }
+  const response = await patchItem(env, itemId, {
+    parent: { id: previousParentId || null },
+    position: { x: previousX, y: previousY, origin: 'center' },
+  });
+  if (!response.ok) return json({ ok: false, stage: 'miro-rollback', miroStatus: response.status, error: await response.text() }, 502);
+  return json({ ok: true, rolledBack: true, issueKey, itemId, previousParentId, previousX, previousY });
 }
 
 async function stickyToJira(request, env) {
@@ -354,6 +377,7 @@ export default {
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
+    if (method === 'POST' && path === '/rollback-custom-card') return rollbackCustomCard(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
     if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env);
     if (method === 'POST' && path === '/conversion-set-status') return setConversionStatus(request, env);

@@ -51,8 +51,8 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
   if (path === '/app.js') {
     assert.match(source, /previousX/);
     assert.match(source, /previousY/);
-    assert.match(source, /current\.x=original\.previousX/);
-    assert.match(source, /current\.y=original\.previousY/);
+    assert.match(source, /rollback-custom-card/);
+    assert.match(source, /previousParentId/);
     assert.doesNotMatch(source, /eventItem\?\{x:Number\(eventItem\.x\)/);
   }
 }
