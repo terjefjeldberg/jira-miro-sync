@@ -141,14 +141,15 @@ export async function createIssueFromSticky(env, summary, workType) {
   const createFields = { project: { key: cfg.jiraProjectKey }, summary, issuetype: { id: String(type.id) } };
   const applied = {};
 
+  const customer = createField(fields, cfg.fields.bugCustomer);
+  const selected = option(customer, DEFAULT_TEXT);
+  if (!customer || !selected?.id) return { ok: false, status: 409, stage: 'find-sticky-customer-default', reason: 'Required sticky-conversion Customer field or option was not found', fieldId: cfg.fields.bugCustomer };
+  createFields[cfg.fields.bugCustomer] = { id: String(selected.id) };
+  applied.customer = { fieldId: cfg.fields.bugCustomer, optionId: String(selected.id), value: selected.value ?? selected.name ?? DEFAULT_TEXT };
+
   if (workType === 'Bug') {
-    const customer = createField(fields, cfg.fields.bugCustomer);
-    const selected = option(customer, DEFAULT_TEXT);
-    if (!customer || !selected?.id) return { ok: false, status: 409, stage: 'find-bug-sticky-defaults', reason: 'Required Bug sticky-conversion field or option was not found', fieldId: cfg.fields.bugCustomer };
     createFields[cfg.fields.bugRepro] = adf(`${DEFAULT_TEXT}.`);
-    createFields[cfg.fields.bugCustomer] = { id: String(selected.id) };
     applied.reproSteps = { fieldId: cfg.fields.bugRepro, value: `${DEFAULT_TEXT}.` };
-    applied.customer = { fieldId: cfg.fields.bugCustomer, optionId: String(selected.id), value: selected.value ?? selected.name ?? DEFAULT_TEXT };
   }
 
   const response = await request(env, '/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: createFields }) });
