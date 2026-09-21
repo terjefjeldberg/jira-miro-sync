@@ -191,8 +191,8 @@ function token(secret) {
   globalThis.fetch = oldFetch;
 }
 
-// Finalizing conversion removes the pending marker but keeps the freeze,
-// even when Jira was already in that status, so a late webhook cannot recenter the card.
+// Finalizing conversion keeps the pending marker until the direct card exists,
+// while the freeze still prevents a late webhook from recentering the card.
 {
   const secret = 'miro-secret';
   const kv = new FakeKv({ [directPendingKey('SN-6')]: JSON.stringify({ stickyId: 'sticky-6' }) });
@@ -208,7 +208,7 @@ function token(secret) {
     body: JSON.stringify({ issueKey: 'SN-6', desiredStatus: 'Todo' }),
   }), env);
   assert.equal(response.status, 200);
-  assert.equal(await kv.get(directPendingKey('SN-6')), null);
+  assert.notEqual(await kv.get(directPendingKey('SN-6')), null);
   assert.notEqual(await kv.get(freezeKey('SN-6')), null);
   globalThis.fetch = oldFetch;
 }
