@@ -16,6 +16,12 @@ function needsCardRefresh(body) {
   return !fields.length || fields.some(field => field !== 'status' && field !== 'statuscategory');
 }
 
+function isIssueCreationWebhook(body) {
+  if (body?.issueCreated === true || body?.created === true) return true;
+  const event = String(body?.event ?? body?.eventType ?? body?.webhookEvent ?? '').trim().toLowerCase();
+  return ['created', 'issue_created', 'issue-created', 'work_item_created', 'work-item-created'].includes(event);
+}
+
 async function requireMiroJson(request, env) {
   return (await requireMiro(request, env)) ? null : json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
 }
@@ -202,6 +208,7 @@ async function setConversionStatus(request, env) {
 async function processJiraWebhookBody(body, env) {
   const issueKey = normalizeIssueKey(body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
+  const issueCreated = isIssueCreationWebhook(body);
   let status = String(body.status ?? '').trim();
   let live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && live.status) status = live.status;
@@ -257,6 +264,9 @@ async function processJiraWebhookBody(body, env) {
   }
 
   if (!customId) {
+    if (!issueCreated) {
+      return json({ ok: true, moved: false, issueKey, status, skipped: 'existing-issue-without-miro-card' });
+    }
     const incomingCreate = await createIncomingCard(env, issueKey);
     if (incomingCreate.ok !== false) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
@@ -270,6 +280,9 @@ async function processJiraWebhookBody(body, env) {
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
+    if (!issueCreated) {
+      return json({ ok: true, moved: false, issueKey, status, staleMappingRemoved: true, skipped: 'existing-issue-without-miro-card' });
+    }
     const incomingCreate = await createIncomingCard(env, issueKey);
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }

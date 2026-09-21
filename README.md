@@ -27,7 +27,7 @@ There are no patch-on-patch wrapper files. A behavior should have one implementa
 3. looks up custom-card mappings in KV;
 4. refreshes custom-card content;
 5. moves mapped cards horizontally while preserving Y;
-6. creates an Incoming custom card only when a Jira-created issue has no mapping;
+6. creates an Incoming custom card only for an explicitly marked issue-creation event with no mapping;
 7. leaves cards in Incoming parked until a user manually places them on the workflow board.
 
 ### Miro card → Jira status
@@ -89,6 +89,8 @@ Optional overrides (current dev values are defaults):
 
 Production currently uses project key `ROV`, Worker `jira-to-miro-prod` and queue `jira-to-miro-prod-events`.
 Functional area and Test description are validated by the Jira transition to Functional Review, not during issue creation. Sticky creation only applies the Bug-specific defaults when the work type is Bug.
+
+Jira Automation web requests must include `"event":"created"` in the rule that runs when a work item is created. Status and field-sync rules must omit that marker (or use another event value). This prevents an update to an existing Jira issue from creating a new Incoming card.
 
 For production migration, create a separate Worker/KV namespace and set these variables to production values. No code fork should be necessary.
 
