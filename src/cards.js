@@ -127,6 +127,18 @@ export async function createDirectCard(env, issueKey, x, y) {
 async function dedupeIncoming(env, issueKey, createdItemId) {
   await new Promise(resolve => setTimeout(resolve, 700));
   const cfg = config(env);
+  const incoming = await listItems(env, { parent_item_id: cfg.incomingFrameId });
+  if (!incoming.ok) return { keptItemId: createdItemId, removedItemIds: [] };
+  const incomingMatches = incoming.items.filter(item => issueKeyFromImage(item) === issueKey);
+  const mapped = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  const mappedInIncoming = incomingMatches.some(item => String(item.id) === mapped);
+
+  // Most creations have one card in Incoming. Avoid scanning the whole board
+  // unless there is evidence of a race or the mapped card has already moved.
+  if (incomingMatches.length <= 1 && (!mapped || mappedInIncoming)) {
+    return { keptItemId: mapped || String(incomingMatches[0]?.id ?? createdItemId), removedItemIds: [] };
+  }
+
   // A competing webhook can move one duplicate out of Incoming before the
   // old Incoming-only scan runs. Search the whole board so duplicates are
   // removed regardless of their current workflow position.
@@ -135,7 +147,6 @@ async function dedupeIncoming(env, issueKey, createdItemId) {
   const matches = listed.items.filter(item => issueKeyFromImage(item) === issueKey);
   const ids = matches.map(item => String(item.id)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (ids.length <= 1) return { keptItemId: ids[0] || createdItemId, removedItemIds: [] };
-  const mapped = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   const mappedMatch = mapped && matches.find(item => String(item.id) === mapped);
   const outsideIncoming = matches
     .filter(item => String(item?.parent?.id ?? item?.parentId ?? '').trim() !== cfg.incomingFrameId)

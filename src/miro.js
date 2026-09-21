@@ -2,6 +2,8 @@ import { config, customMapKey, normalizeIssueKey, normalizeStatus } from './conf
 
 export const miroHeaders = env => ({ Authorization: `Bearer ${env.MIRO_TOKEN}`, Accept: 'application/json' });
 const itemsBase = env => `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/items`;
+const incomingFrameCache = new Map();
+const INCOMING_FRAME_CACHE_TTL_MS = 30_000;
 
 export async function getItem(env, itemId) {
   const response = await fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env) });
@@ -276,20 +278,25 @@ export function issueKeyFromImage(item) {
 export async function incomingPosition(env) {
   const cfg = config(env);
   const frameUrl = `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/frames/${encodeURIComponent(cfg.incomingFrameId)}`;
+  const cacheKey = `${env.MIRO_BOARD_ID}:${cfg.incomingFrameId}`;
+  const cached = incomingFrameCache.get(cacheKey);
+  let frame = cached && Date.now() - cached.timestamp < INCOMING_FRAME_CACHE_TTL_MS ? cached.frame : null;
   let response = null;
   let lastError = '';
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    response = await fetch(frameUrl, { headers: miroHeaders(env) });
-    if (response.ok) break;
-    lastError = await response.text();
-    if (response.status < 500 || attempt === 2) break;
-    await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+  if (!frame) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(frameUrl, { headers: miroHeaders(env) });
+      if (response.ok) break;
+      lastError = await response.text();
+      if (response.status < 500 || attempt === 2) break;
+      await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+    }
   }
 
   // Miro occasionally returns a transient 5xx for an existing frame. Use a
   // safe local position inside the known Incoming frame instead of failing the
   // Jira webhook; the parent frame ID is still valid for the image upload.
-  if (!response?.ok) {
+  if (!frame && !response?.ok) {
     if (response?.status >= 500) {
       const i = cfg.incoming, c = cfg.card;
       return { ok: true, x: i.marginX + c.width / 2, y: i.marginY + c.height / 2, parentId: cfg.incomingFrameId, fallback: true, fallbackReason: 'incoming-frame-read-5xx' };
@@ -297,7 +304,10 @@ export async function incomingPosition(env) {
     return { ok: false, status: 502, stage: 'incoming-read-frame', miroStatus: response?.status || 502, error: lastError };
   }
 
-  const frame = await response.json();
+  if (!frame) {
+    frame = await response.json();
+    incomingFrameCache.set(cacheKey, { frame, timestamp: Date.now() });
+  }
   const width = Number(frame?.geometry?.width), height = Number(frame?.geometry?.height);
   if (!Number.isFinite(width) || !Number.isFinite(height)) return { ok: false, status: 502, stage: 'incoming-frame-geometry', reason: 'Incoming frame has invalid geometry' };
   const children = await listItems(env, { parent_item_id: cfg.incomingFrameId });
