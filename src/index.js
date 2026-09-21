@@ -19,7 +19,7 @@ function needsCardRefresh(body) {
 function isIssueCreationWebhook(body) {
   if (body?.issueCreated === true || body?.created === true) return true;
   const event = String(body?.event ?? body?.eventType ?? body?.webhookEvent ?? '').trim().toLowerCase();
-  return ['created', 'issue_created', 'issue-created', 'work_item_created', 'work-item-created'].includes(event);
+  return ['created', 'issue_created', 'issue-created', 'work_item_created', 'work-item-created', 'ensure_card', 'ensure-card'].includes(event);
 }
 
 async function requireMiroJson(request, env) {
