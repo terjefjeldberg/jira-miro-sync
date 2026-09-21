@@ -48,6 +48,13 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
   assert.equal(response.status, 200);
   const source = await response.text();
   assert.doesNotThrow(() => new Function(source), `${path} must be valid browser JavaScript`);
+  if (path === '/app.js') {
+    assert.match(source, /previousX/);
+    assert.match(source, /previousY/);
+    assert.match(source, /current\.x=original\.previousX/);
+    assert.match(source, /current\.y=original\.previousY/);
+    assert.doesNotMatch(source, /eventItem\?\{x:Number\(eventItem\.x\)/);
+  }
 }
 
 for (const path of ['/miro-app', '/miro-panel']) {
