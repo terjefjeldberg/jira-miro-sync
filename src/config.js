@@ -71,7 +71,7 @@ export function config(env) {
       functionalArea: env.JIRA_FIELD_FUNCTIONAL_AREA || env.JIRA_FIELD_TEST_AREA || 'customfield_11075',
       testDescription: env.JIRA_FIELD_TEST_DESCRIPTION || 'customfield_11108',
       originalMiroCreated: env.JIRA_FIELD_ORIGINAL_MIRO_CREATED || 'customfield_11207',
-      bugRepro: env.JIRA_FIELD_BUG_REPRO || 'customfield_10868',
+      bugRepro: env.JIRA_FIELD_BUG_REPRO || 'customfield_10941',
       bugCustomer: env.JIRA_FIELD_BUG_CUSTOMER || 'customfield_11340',
       hotfixCandidate: env.JIRA_FIELD_HOTFIX_CANDIDATE || 'customfield_11274',
     },
