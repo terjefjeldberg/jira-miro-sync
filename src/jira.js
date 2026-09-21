@@ -143,9 +143,14 @@ export async function createIssueFromSticky(env, summary, workType) {
 
   const customer = createField(fields, cfg.fields.bugCustomer);
   const selected = option(customer, DEFAULT_TEXT);
-  if (!customer || !selected?.id) return { ok: false, status: 409, stage: 'find-sticky-customer-default', reason: 'Required sticky-conversion Customer field or option was not found', fieldId: cfg.fields.bugCustomer };
-  createFields[cfg.fields.bugCustomer] = { id: String(selected.id) };
-  applied.customer = { fieldId: cfg.fields.bugCustomer, optionId: String(selected.id), value: selected.value ?? selected.name ?? DEFAULT_TEXT };
+  const customerRequired = new Set(['Bug', 'Improvement', 'New Feature']).has(workType);
+  if (customerRequired && (!customer || !selected?.id)) {
+    return { ok: false, status: 409, stage: 'find-sticky-customer-default', reason: 'Required sticky-conversion Customer field or option was not found', fieldId: cfg.fields.bugCustomer };
+  }
+  if (selected?.id) {
+    createFields[cfg.fields.bugCustomer] = { id: String(selected.id) };
+    applied.customer = { fieldId: cfg.fields.bugCustomer, optionId: String(selected.id), value: selected.value ?? selected.name ?? DEFAULT_TEXT };
+  }
 
   if (workType === 'Bug') {
     createFields[cfg.fields.bugRepro] = adf(`${DEFAULT_TEXT}.`);
