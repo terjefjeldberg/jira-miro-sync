@@ -46,6 +46,12 @@ export const FIXED_MIRO_USERS = {
   '3458764636149340450': 'Rafal Mnich',
 };
 
+// Stable Jira account IDs for users whose Jira display name cannot be
+// resolved reliably through the user search endpoints.
+export const FIXED_JIRA_ACCOUNT_BY_NAME = {
+  'prem wycisk': '712020:22535b37-56d1-42fb-9a00-5c61d761f273',
+};
+
 const asNumber = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;

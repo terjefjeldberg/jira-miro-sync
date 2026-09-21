@@ -1,4 +1,4 @@
-import { config, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
+import { config, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
 
 const DEFAULT_TEXT = 'Created from Miro sticky note';
 const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
@@ -299,6 +299,11 @@ export async function resolveReporter(env, stickyId, claimedCreatorId) {
   if (!creator.name) creator = (await miroMember(env, creator.id)) || creator;
   if (!creator.name) creator = (await miroScim(env, creator.id)) || creator;
   if (!creator.name) return { ok: false, status: 409, stage: 'reporter-miro-creator-name', reason: `Could not resolve Miro creator ${creator.id}`, miroCreatorId: creator.id };
+
+  const fixedAccountId = String(FIXED_JIRA_ACCOUNT_BY_NAME[String(creator.name).trim().toLowerCase()] ?? '').trim();
+  if (fixedAccountId) {
+    return { ok: true, creatorId: creator.id, creatorName: creator.name, accountId: fixedAccountId, source: 'fixed-miro-jira-account', createdAt: sticky.createdAt };
+  }
 
   const jiraUser = await jiraUserByName(env, creator.name);
   if (!jiraUser) return { ok: false, status: 409, stage: 'reporter-jira-account-id-unresolved', reason: `Could not resolve Jira accountId for ${creator.name}`, miroCreatorId: creator.id, miroCreatorName: creator.name };
