@@ -318,13 +318,7 @@ function jiraDate(value) {
 }
 
 async function resolveOriginalMiroCreatedField(env, configuredId) {
-  if (env.JIRA_FIELD_ORIGINAL_MIRO_CREATED) return configuredId;
-  const response = await request(env, '/field');
-  if (!response.ok) return configuredId;
-  const fields = await response.json();
-  const wanted = 'original miro created';
-  const match = (Array.isArray(fields) ? fields : []).find(field => String(field?.name ?? '').trim().toLowerCase() === wanted);
-  return String(match?.id ?? configuredId).trim();
+  return String(configuredId ?? '').trim();
 }
 
 export async function applyStickyMetadata(env, issueKey, reporter) {
