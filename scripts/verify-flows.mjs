@@ -106,7 +106,7 @@ function token(secret) {
   const env = { ...baseEnv, CARD_MAP: kv, JIRA_WEBHOOK_SECRET: 'webhook-secret' };
   const oldFetch = globalThis.fetch;
   globalThis.fetch = async url => {
-    if (String(url).includes('/issue/SN-5?fields=')) return json({ fields: { summary: 'x', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'Todo' }, customfield_11207: null } });
+    if (String(url).includes('/issue/SN-5?fields=')) return json({ fields: { summary: 'x', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'Todo' }, customfield_11208: null } });
     throw new Error(`Unexpected fetch ${url}`);
   };
   const response = await worker.fetch(new Request('https://worker.test/', {
@@ -154,7 +154,7 @@ function token(secret) {
       return json({ comments: [], total: 0, maxResults: 100, startAt: 0 });
     }
     if (value.includes('/issue/SN-4?fields=')) {
-      return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11207: '2026-09-07T10:00:00.000+0000' } });
+      return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11208: '2026-09-07' } });
     }
     if (value.includes('/items?') && value.includes('type=image')) {
       return json({ data: [{ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } }] });
