@@ -385,7 +385,6 @@ export async function syncMiroRemoteLink(env, issueKey, itemId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       globalId: `miro-card:${boardId}:${normalizedIssueKey}`,
-      application: { type: 'com.miro', name: 'Miro' },
       relationship: 'visualized in',
       object: {
         url: miroCardUrl(env, normalizedItemId),
