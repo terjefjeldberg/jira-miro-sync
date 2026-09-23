@@ -14,16 +14,36 @@ const query=new URLSearchParams(window.location.search);
 const issueKey=String(data&&data.issueKey||query.get('issueKey')||'').trim().toUpperCase();
 const itemId=String(data&&data.itemId||query.get('itemId')||'').trim();
 title.textContent=issueKey ? 'Comments · '+issueKey : 'Comments';
-const plain=node=>{
-  if(!node)return '';
-  if(typeof node==='string')return node;
-  if(node.type==='text')return String(node.text||'');
-  const value=(node.content||[]).map(plain).join('');
-  return node.type==='paragraph'||node.type==='heading'?value+'\n':value;
-};
 const showMessage=(value,error=false)=>{message.textContent=value||'';message.className=error?'error':''};
+const appendNode=async(parent,node,token)=>{
+  if(!node)return;
+  if(typeof node==='string'){parent.append(document.createTextNode(node));return}
+  if(node.type==='text'){parent.append(document.createTextNode(String(node.text||'')));return}
+  if(node.type==='hardBreak'){parent.append(document.createElement('br'));return}
+  if(node.type==='media'){
+    const attrs=node.attrs||{};
+    const attachmentId=String(attrs.id||'').trim();
+    const alt=String(attrs.alt||'Jira attachment');
+    if(!attachmentId){parent.append(document.createTextNode(alt));return}
+    const image=document.createElement('img');image.className='comment-image';image.alt=alt;image.title=alt;
+    try{
+      const response=await fetch('/jira-comment-media?issueKey='+encodeURIComponent(issueKey)+'&itemId='+encodeURIComponent(itemId)+'&attachmentId='+encodeURIComponent(attachmentId),{headers:{Authorization:'Bearer '+token}});
+      if(!response.ok)throw new Error('Attachment request failed');
+      image.src=URL.createObjectURL(await response.blob());
+      parent.append(image);
+    }catch(error){parent.append(document.createTextNode(alt+' (image unavailable)'));}
+    return;
+  }
+  if(node.type==='mention'){parent.append(document.createTextNode(String(node.attrs&&node.attrs.text||'')));return}
+  if(node.type==='inlineCard'){parent.append(document.createTextNode(String(node.attrs&&node.attrs.url||'')));return}
+  const block=node.type==='paragraph'||node.type==='heading'||node.type==='blockquote'||node.type==='mediaSingle';
+  const target=block?document.createElement(node.type==='heading'?'div':'div'):parent;
+  if(block){target.className=node.type==='mediaSingle'?'comment-media':'comment-block';parent.append(target)}
+  for(const child of node.content||[])await appendNode(target,child,token);
+};
+const appendBody=async(parent,body,token)=>{for(const node of body&&body.content||[])await appendNode(parent,node,token)};
 async function currentMiroUserName(){try{const token=await miro.board.getIdToken();const part=String(token||'').split('.')[1];if(part){const payload=JSON.parse(atob(part.replace(/-/g,'+').replace(/_/g,'/')));const name=payload.name||payload.display_name||payload.displayName||payload.preferred_username||payload.nickname||payload.username;if(String(name||'').trim())return String(name).trim()}}catch(error){console.warn('Could not read Miro user name from identity token',error)}return 'Miro user'}
-const render=comments=>{
+const render=async(comments,token)=>{
   list.replaceChildren();
   if(!comments.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No comments yet.';list.append(empty);return}
   for(const comment of comments){
@@ -32,7 +52,7 @@ const render=comments=>{
     const author=document.createElement('strong');author.textContent=comment.author||'Unknown user';
     const date=document.createElement('time');date.textContent=comment.created?new Date(comment.created).toLocaleString():'';
     header.append(author,date);
-    const body=document.createElement('p');body.textContent=plain(comment.body).trim();
+    const body=document.createElement('div');body.className='comment-body';await appendBody(body,comment.body,token);
     article.append(header,body);list.append(article);
   }
   list.scrollTop=list.scrollHeight;
@@ -43,7 +63,7 @@ const load=async()=>{
   const response=await fetch('/jira-comments?issueKey='+encodeURIComponent(issueKey)+'&itemId='+encodeURIComponent(itemId),{headers:{Authorization:'Bearer '+token}});
   const result=await response.json().catch(()=>null);
   if(!response.ok||!result||!result.ok){showMessage(result&&result.reason||'Could not load Jira comments.',true);return}
-  render(result.comments||[]);
+  await render(result.comments||[],token);
 };
 form.addEventListener('submit',async event=>{
   event.preventDefault();

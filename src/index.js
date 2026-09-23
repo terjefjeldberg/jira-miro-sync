@@ -1,6 +1,6 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, listIssueComments, resolveMiroCommentAuthor, resolveReporter, transitionIssue } from './jira.js';
+import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
@@ -175,6 +175,28 @@ async function jiraComments(request, env) {
   if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
   const result = await listIssueComments(env, issueKey);
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
+}
+
+async function jiraCommentMedia(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const url = new URL(request.url);
+  const issueKey = normalizeIssueKey(url.searchParams.get('issueKey'));
+  const itemId = String(url.searchParams.get('itemId') ?? '').trim();
+  const attachmentId = String(url.searchParams.get('attachmentId') ?? '').trim();
+  if (!issueKeyIsValid(issueKey, env) || !itemId || !attachmentId) return json({ ok: false, reason: 'Invalid Jira attachment request' }, 400);
+  const mappedItemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  if (!mappedItemId || mappedItemId !== itemId) return json({ ok: false, reason: 'Miro card is not mapped to this Jira issue' }, 403);
+  const result = await getJiraAttachmentContent(env, issueKey, attachmentId);
+  if (!result.ok) return json({ ok: false, reason: result.reason || result.error || 'Could not load Jira attachment' }, result.status || 502);
+  return new Response(result.response.body, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': 'https://miro.com',
+      'Content-Type': result.response.headers.get('content-type') || 'application/octet-stream',
+      'Cache-Control': 'private, max-age=300',
+      'Content-Disposition': 'inline',
+    },
+  });
 }
 
 async function addJiraComment(request, env, ctx) {
@@ -371,8 +393,9 @@ export default {
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
     if (method === 'GET' && path === '/comments.js') return renderCommentsClient();
     if (method === 'GET' && path === '/jira-comments-modal') return renderCommentsModal();
-     if (method === 'GET' && path === '/jira-card-menu') return renderCardMenu();
+    if (method === 'GET' && path === '/jira-card-menu') return renderCardMenu();
     if (method === 'GET' && path === '/jira-comments') return jiraComments(request, env);
+    if (method === 'GET' && path === '/jira-comment-media') return jiraCommentMedia(request, env);
     if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env, ctx);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);

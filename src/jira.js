@@ -370,6 +370,21 @@ export async function listIssueComments(env, issueKey) {
   };
 }
 
+export async function getJiraAttachmentContent(env, issueKey, attachmentId) {
+  const normalizedIssueKey = normalizeIssueKey(issueKey);
+  const normalizedAttachmentId = String(attachmentId ?? '').trim();
+  if (!normalizedIssueKey || !/^\d+$/.test(normalizedAttachmentId)) return { ok: false, status: 400, reason: 'Invalid Jira attachment request' };
+  const issue = await getIssue(env, normalizedIssueKey, ['attachment']);
+  if (!issue.ok) return { ok: false, status: issue.status, error: issue.error };
+  const attachments = Array.isArray(issue.issue?.fields?.attachment) ? issue.issue.fields.attachment : [];
+  if (!attachments.some(attachment => String(attachment?.id ?? '') === normalizedAttachmentId)) {
+    return { ok: false, status: 404, reason: 'Attachment does not belong to this Jira issue' };
+  }
+  const response = await request(env, `/attachment/content/${encodeURIComponent(normalizedAttachmentId)}`, { headers: { Accept: '*/*' } });
+  if (!response.ok) return { ok: false, status: response.status, error: await response.text() };
+  return { ok: true, response };
+}
+
 export async function addIssueComment(env, issueKey, commentText) {
   const text = String(commentText ?? '').trim();
   if (!text) return { ok: false, status: 400, reason: 'Comment cannot be empty' };
