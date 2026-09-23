@@ -371,6 +371,37 @@ export async function listIssueComments(env, issueKey) {
   };
 }
 
+export function miroCardUrl(env, itemId) {
+  return `https://miro.com/app/board/${encodeURIComponent(String(env.MIRO_BOARD_ID ?? '').trim())}/?moveToWidget=${encodeURIComponent(String(itemId ?? '').trim())}`;
+}
+
+export async function syncMiroRemoteLink(env, issueKey, itemId) {
+  const normalizedIssueKey = normalizeIssueKey(issueKey);
+  const normalizedItemId = String(itemId ?? '').trim();
+  const boardId = String(env.MIRO_BOARD_ID ?? '').trim();
+  if (!normalizedIssueKey || !normalizedItemId || !boardId) return { ok: false, skipped: true, reason: 'Missing Miro card link data' };
+  const response = await request(env, `/issue/${encodeURIComponent(normalizedIssueKey)}/remotelink`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      globalId: `miro-card:${boardId}:${normalizedIssueKey}`,
+      application: { type: 'com.miro', name: 'Miro' },
+      relationship: 'visualized in',
+      object: {
+        url: miroCardUrl(env, normalizedItemId),
+        title: 'Open in Miro',
+        summary: 'Open the linked custom card in Miro',
+      },
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Could not sync Miro remote link to Jira', { issueKey: normalizedIssueKey, itemId: normalizedItemId, status: response.status, error });
+    return { ok: false, status: response.status, error };
+  }
+  return { ok: true, issueKey: normalizedIssueKey, itemId: normalizedItemId, url: miroCardUrl(env, normalizedItemId) };
+}
+
 export async function getJiraAttachmentContent(env, issueKey, attachmentId) {
   const normalizedIssueKey = normalizeIssueKey(issueKey);
   const normalizedAttachmentId = String(attachmentId ?? '').trim();

@@ -1,6 +1,6 @@
 import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, transitionIssue } from './jira.js';
+import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
@@ -51,7 +51,13 @@ async function register(request, env) {
   const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
     .filter(entry => issueKeyIsValid(normalizeIssueKey(entry?.issueKey), env));
   const mappings = await registerMappings(env, entries);
-  return json({ ok: true, registered: mappings.length, mappings });
+  const links = await Promise.all(mappings.map(entry => linkMiroCardBestEffort(env, entry.issueKey, entry.mappedItemId)));
+  return json({ ok: true, registered: mappings.length, mappings, links });
+}
+
+async function linkMiroCardBestEffort(env, issueKey, itemId) {
+  try { return await syncMiroRemoteLink(env, issueKey, itemId); }
+  catch (error) { console.error('Miro-to-Jira link sync failed', { issueKey, itemId, error: String(error) }); return { ok: false, error: String(error) }; }
 }
 
 async function reconcileCustomCards(request, env) {
@@ -221,12 +227,16 @@ async function addJiraComment(request, env, ctx) {
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 502));
 }
 
-async function directCard(request, env) {
+async function directCard(request, env, ctx) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const issueKey = normalizeIssueKey(parsed.body.issueKey), x = Number(parsed.body.x), y = Number(parsed.body.y);
   if (!issueKeyIsValid(issueKey, env) || !Number.isFinite(x) || !Number.isFinite(y)) return json({ ok: false, reason: 'Invalid issue key or position' }, 400);
   const result = await createDirectCard(env, issueKey, x, y);
+  if (result.ok && result.itemId) {
+    const sync = () => linkMiroCardBestEffort(env, issueKey, result.itemId);
+    if (ctx?.waitUntil) ctx.waitUntil(sync()); else await sync();
+  }
   if (result.ok) await env.CARD_MAP.delete(directPendingKey(issueKey));
   return json(result, result.ok ? 200 : (result.status || 500));
 }
@@ -311,7 +321,10 @@ async function processJiraWebhookBody(body, env) {
       return json({ ok: true, moved: false, issueKey, status, skipped: 'existing-issue-without-miro-card' });
     }
     const incomingCreate = await createIncomingCard(env, issueKey);
-    if (incomingCreate.ok !== false) await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
+    if (incomingCreate.ok !== false) {
+      await linkMiroCardBestEffort(env, issueKey, incomingCreate.itemId);
+      await syncCommentIndicator(env, issueKey).catch(error => console.error('Comment indicator sync failed', error));
+    }
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
 
@@ -327,6 +340,7 @@ async function processJiraWebhookBody(body, env) {
       return json({ ok: true, moved: false, issueKey, status, staleMappingRemoved: true, skipped: 'existing-issue-without-miro-card' });
     }
     const incomingCreate = await createIncomingCard(env, issueKey);
+    if (incomingCreate.ok !== false) await linkMiroCardBestEffort(env, issueKey, incomingCreate.itemId);
     return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
   }
   const ok = custom.ok !== false && customRefresh.ok !== false;
@@ -402,7 +416,7 @@ export default {
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/rollback-custom-card') return rollbackCustomCard(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
-    if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env);
+    if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env, ctx);
     if (method === 'POST' && path === '/conversion-set-status') return setConversionStatus(request, env);
     if (method === 'POST' && path === '/') return jiraWebhook(request, env);
     return new Response('Not found', { status: 404 });
