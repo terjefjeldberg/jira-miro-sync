@@ -372,7 +372,9 @@ export async function listIssueComments(env, issueKey) {
 }
 
 export function miroCardUrl(env, itemId) {
-  return `https://miro.com/app/board/${encodeURIComponent(String(env.MIRO_BOARD_ID ?? '').trim())}/?moveToWidget=${encodeURIComponent(String(itemId ?? '').trim())}`;
+  const boardId = encodeURIComponent(String(env.MIRO_BOARD_ID ?? '').trim());
+  const widgetId = encodeURIComponent(String(itemId ?? '').trim());
+  return `https://miro.com/app/board/${boardId}/?moveToWidget=${widgetId}&cot=14`;
 }
 
 export async function syncMiroRemoteLink(env, issueKey, itemId) {
