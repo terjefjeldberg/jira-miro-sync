@@ -42,6 +42,36 @@ const appendNode=async(parent,node,token)=>{
   for(const child of node.content||[])await appendNode(target,child,token);
 };
 const appendBody=async(parent,body,token)=>{for(const node of body&&body.content||[])await appendNode(parent,node,token)};
+const appendRenderedHtml=async(parent,html,token)=>{
+  const parsed=new DOMParser().parseFromString(String(html||''),'text/html');
+  const appendElement=async(target,element)=>{
+    if(element.nodeType===Node.TEXT_NODE){target.append(document.createTextNode(element.nodeValue||''));return}
+    if(element.nodeType!==Node.ELEMENT_NODE)return;
+    const tag=element.tagName.toLowerCase();
+    if(tag==='br'){target.append(document.createElement('br'));return}
+    if(tag==='img'){
+      const source=String(element.getAttribute('src')||'');
+      const match=source.match(/\/attachment\/(?:content|thumbnail)\/(\d+)/i);
+      const alt=String(element.getAttribute('alt')||'Jira attachment');
+      if(!match){target.append(document.createTextNode(alt));return}
+      const image=document.createElement('img');image.className='comment-image';image.alt=alt;image.title=alt;
+      try{
+        const response=await fetch('/jira-comment-media?issueKey='+encodeURIComponent(issueKey)+'&itemId='+encodeURIComponent(itemId)+'&attachmentId='+encodeURIComponent(match[1]),{headers:{Authorization:'Bearer '+token}});
+        if(!response.ok)throw new Error('Attachment request failed');
+        image.src=URL.createObjectURL(await response.blob());target.append(image);
+      }catch(error){target.append(document.createTextNode(alt+' (image unavailable)'));}
+      return;
+    }
+    const allowed={p:'div',div:'div',span:'span',strong:'strong',b:'strong',em:'em',i:'em',del:'del',s:'s',ul:'ul',ol:'ol',li:'li',blockquote:'blockquote',code:'code',pre:'pre'};
+    const safeTag=allowed[tag];
+    if(!safeTag){for(const child of element.childNodes)await appendElement(target,child);return}
+    const childTarget=document.createElement(safeTag);
+    if(tag==='p'||tag==='div'||tag==='blockquote')childTarget.className='comment-block';
+    target.append(childTarget);
+    for(const child of element.childNodes)await appendElement(childTarget,child);
+  };
+  for(const child of parsed.body.childNodes)await appendElement(parent,child);
+};
 async function currentMiroUserName(){try{const token=await miro.board.getIdToken();const part=String(token||'').split('.')[1];if(part){const payload=JSON.parse(atob(part.replace(/-/g,'+').replace(/_/g,'/')));const name=payload.name||payload.display_name||payload.displayName||payload.preferred_username||payload.nickname||payload.username;if(String(name||'').trim())return String(name).trim()}}catch(error){console.warn('Could not read Miro user name from identity token',error)}return 'Miro user'}
 const render=async(comments,token)=>{
   list.replaceChildren();
@@ -52,7 +82,8 @@ const render=async(comments,token)=>{
     const author=document.createElement('strong');author.textContent=comment.author||'Unknown user';
     const date=document.createElement('time');date.textContent=comment.created?new Date(comment.created).toLocaleString():'';
     header.append(author,date);
-    const body=document.createElement('div');body.className='comment-body';await appendBody(body,comment.body,token);
+    const body=document.createElement('div');body.className='comment-body';
+    if(comment.renderedBody)await appendRenderedHtml(body,comment.renderedBody,token);else await appendBody(body,comment.body,token);
     article.append(header,body);list.append(article);
   }
   list.scrollTop=list.scrollHeight;

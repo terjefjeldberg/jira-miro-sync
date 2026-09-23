@@ -353,7 +353,7 @@ export async function applyStickyMetadata(env, issueKey, reporter) {
 }
 
 export async function listIssueComments(env, issueKey) {
-  const response = await request(env, `/issue/${encodeURIComponent(normalizeIssueKey(issueKey))}/comment?orderBy=created&maxResults=100`);
+  const response = await request(env, `/issue/${encodeURIComponent(normalizeIssueKey(issueKey))}/comment?orderBy=created&maxResults=100&expand=renderedBody`);
   if (!response.ok) return { ok: false, status: response.status, error: await response.text() };
   const body = await response.json();
   return {
@@ -365,6 +365,7 @@ export async function listIssueComments(env, issueKey) {
       created: comment?.created ?? null,
       updated: comment?.updated ?? null,
       body: comment?.body ?? null,
+      renderedBody: String(comment?.renderedBody ?? ''),
     })),
     total: Number(body?.total ?? body?.comments?.length ?? 0),
   };
