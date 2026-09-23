@@ -372,7 +372,10 @@ export async function listIssueComments(env, issueKey) {
 }
 
 export function miroCardUrl(env, itemId) {
-  const boardId = encodeURIComponent(String(env.MIRO_BOARD_ID ?? '').trim());
+  // Miro's board deep links keep the trailing '=' in the board ID unescaped.
+  // Matching the URL produced by Miro's own "Copy link" is required for
+  // moveToWidget to be honored by the board UI.
+  const boardId = String(env.MIRO_BOARD_ID ?? '').trim();
   const widgetId = encodeURIComponent(String(itemId ?? '').trim());
   return `https://miro.com/app/board/${boardId}/?moveToWidget=${widgetId}&cot=14`;
 }
