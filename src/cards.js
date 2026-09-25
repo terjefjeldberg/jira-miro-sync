@@ -61,10 +61,13 @@ function fit(text, size, maxWidth) {
 
 function assigneeBadge(card) {
   const label = fit(card.assignee, 8, 72) || 'Unassigned';
-  const badgeWidth = Math.min(80, Math.max(24, width(label, 8) + 10));
-  const x = 181 - badgeWidth;
+  // This is intentionally a fixed slot, matching the red-marked area in the
+  // card design. The label is fitted inside it rather than changing the card
+  // layout as assignee names vary.
+  const x = 106;
+  const badgeWidth = 80;
   const color = assigneeColor(card.assigneeAccountId);
-  return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x.toFixed(2)}" y="78" width="${badgeWidth.toFixed(2)}" height="14" rx="4" fill="${color.background}"/><text x="${(181 - 5).toFixed(2)}" y="88.8" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
+  return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x}" y="80" width="${badgeWidth}" height="18" rx="4" fill="${color.background}"/><text x="181" y="92.8" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
 }
 
 function wrap(text, size, maxWidth) {

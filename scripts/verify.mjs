@@ -34,13 +34,13 @@ assert.match(svg, /Verification/);
 assert.match(svg, /card/);
 assert.match(svg, /#FD9DE8/);
 assert.match(svg, /Assignee: Test User/);
-assert.match(svg, /<rect x="\d+\.\d+" y="78" width="\d+\.\d+" height="14"/);
+assert.match(svg, /<rect x="106" y="80" width="80" height="18"/);
 
 const sameAccountDifferentName = cardSvg({
   issueKey: 'SN-123', summary: 'Verification card', priority: 'High', assignee: 'Renamed User',
   assigneeAccountId: 'account-test-user', workType: 'Bug',
 });
-const badgeColor = value => value.match(/<rect x="[\d.]+" y="78" width="[\d.]+" height="14" rx="4" fill="(#[A-F0-9]+)"/)?.[1];
+const badgeColor = value => value.match(/<rect x="106" y="80" width="80" height="18" rx="4" fill="(#[A-F0-9]+)"/)?.[1];
 assert.equal(badgeColor(svg), badgeColor(sameAccountDifferentName));
 const differentAccount = cardSvg({
   issueKey: 'SN-123', summary: 'Verification card', priority: 'High', assignee: 'Another User',
