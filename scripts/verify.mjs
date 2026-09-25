@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import worker from '../src/index.js';
 import { cardSvg } from '../src/cards.js';
 import { config, issueKeyIsValid } from '../src/config.js';
+import { getCardData } from '../src/jira.js';
 
 const env = {
   JIRA_PROJECT_KEY: 'SN',
@@ -25,12 +26,44 @@ const svg = cardSvg({
   summary: 'Verification card',
   priority: 'High',
   assignee: 'Test User',
+  assigneeAccountId: 'account-test-user',
   workType: 'Bug',
 });
 assert.match(svg, /SN-123/);
 assert.match(svg, /Verification/);
 assert.match(svg, /card/);
 assert.match(svg, /#FD9DE8/);
+assert.match(svg, /Assignee: Test User/);
+assert.match(svg, /<rect x="\d+\.\d+" y="78" width="\d+\.\d+" height="14"/);
+
+const sameAccountDifferentName = cardSvg({
+  issueKey: 'SN-123', summary: 'Verification card', priority: 'High', assignee: 'Renamed User',
+  assigneeAccountId: 'account-test-user', workType: 'Bug',
+});
+const badgeColor = value => value.match(/<rect x="[\d.]+" y="78" width="[\d.]+" height="14" rx="4" fill="(#[A-F0-9]+)"/)?.[1];
+assert.equal(badgeColor(svg), badgeColor(sameAccountDifferentName));
+const differentAccount = cardSvg({
+  issueKey: 'SN-123', summary: 'Verification card', priority: 'High', assignee: 'Another User',
+  assigneeAccountId: 'account-another-user', workType: 'Bug',
+});
+assert.notEqual(badgeColor(svg), badgeColor(differentAccount));
+
+const unassignedSvg = cardSvg({ issueKey: 'SN-125', summary: 'Unassigned card', priority: 'Low', assignee: 'Unassigned', workType: 'Bug' });
+assert.match(unassignedSvg, /fill="#D1D5DB"/);
+
+const oldFetch = globalThis.fetch;
+globalThis.fetch = async url => {
+  assert.match(String(url), /assignee/);
+  return new Response(JSON.stringify({ fields: {
+    summary: 'Account ID test', priority: { name: 'Medium' },
+    assignee: { displayName: 'Stable Name', accountId: 'account-123' },
+    issuetype: { name: 'Bug' }, status: { name: 'Todo' },
+  } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+const cardData = await getCardData(env, 'SN-126');
+assert.equal(cardData.assignee, 'Stable Name');
+assert.equal(cardData.assigneeAccountId, 'account-123');
+globalThis.fetch = oldFetch;
 
 const hotfixSvg = cardSvg({
   issueKey: 'SN-124', summary: 'Hotfix bug', priority: 'High', assignee: 'Test User', workType: 'Bug', hotfixCandidate: true,

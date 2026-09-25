@@ -9,6 +9,34 @@ function esc(value) {
 const CARD_WIDTH = 189;
 const CARD_HEIGHT = 123.12;
 
+// Keep this palette stable. The accountId hash below means a user's color is
+// independent of displayName, refresh order, and the current set of users.
+const ASSIGNEE_COLORS = [
+  { background: '#D6E4FF', foreground: '#12315B' },
+  { background: '#C6F6D5', foreground: '#155724' },
+  { background: '#E9D5FF', foreground: '#4A1D70' },
+  { background: '#FFE0B2', foreground: '#6B3500' },
+  { background: '#B2F5EA', foreground: '#075E54' },
+  { background: '#FBCFE8', foreground: '#7A1748' },
+  { background: '#FEF08A', foreground: '#5C4A00' },
+  { background: '#BAE6FD', foreground: '#0C4A6E' },
+  { background: '#FECACA', foreground: '#7F1D1D' },
+  { background: '#DDD6FE', foreground: '#312E81' },
+];
+
+const UNASSIGNED_COLOR = { background: '#D1D5DB', foreground: '#374151' };
+
+function assigneeColor(accountId) {
+  const value = String(accountId ?? '').trim();
+  if (!value) return UNASSIGNED_COLOR;
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ASSIGNEE_COLORS[(hash >>> 0) % ASSIGNEE_COLORS.length];
+}
+
 function width(text, size) {
   let units = 0;
   for (const char of String(text ?? '')) {
@@ -29,6 +57,14 @@ function fit(text, size, maxWidth) {
     result += char;
   }
   return result ? result + '…' : '…';
+}
+
+function assigneeBadge(card) {
+  const label = fit(card.assignee, 8, 72) || 'Unassigned';
+  const badgeWidth = Math.min(80, Math.max(24, width(label, 8) + 10));
+  const x = 181 - badgeWidth;
+  const color = assigneeColor(card.assigneeAccountId);
+  return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x.toFixed(2)}" y="78" width="${badgeWidth.toFixed(2)}" height="14" rx="4" fill="${color.background}"/><text x="${(181 - 5).toFixed(2)}" y="88.8" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
 }
 
 function wrap(text, size, maxWidth) {
@@ -86,8 +122,7 @@ export function cardSvg(card) {
   const textColor = isBlocker ? '#FFFFFF' : '#1A1A1A';
   const linkColor = isBlocker ? '#9CCBFF' : '#0A66C2';
   const priority = fit(card.priority, 8, 62) || 'None';
-  const assignee = fit(card.assignee, 8, 78) || 'Unassigned';
-  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="102" viewBox="0 0 189 102">', '<rect x="1" y="1" width="187" height="100" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${textColor}">${esc(card.issueKey)}</text>`, `<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${linkColor}">Jira ↗</text>`, title.replaceAll('fill="#1A1A1A"', `fill="${textColor}"`), commentIndicatorSvg(card.commentCount), priorityIcon(card.priority), `<text x="25" y="89" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(priority)}</text>`, `<text x="181" y="89" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(assignee)}</text>`, '</svg>'].join('');
+  return ['<svg xmlns="http://www.w3.org/2000/svg" width="189" height="102" viewBox="0 0 189 102">', '<rect x="1" y="1" width="187" height="100" rx="6" fill="' + color + '" stroke="#8A8A8A" stroke-width="1.0"/>', `<text x="8" y="15" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${textColor}">${esc(card.issueKey)}</text>`, `<text x="181" y="15" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${linkColor}">Jira ↗</text>`, title.replaceAll('fill="#1A1A1A"', `fill="${textColor}"`), commentIndicatorSvg(card.commentCount), priorityIcon(card.priority), `<text x="25" y="89" font-family="Open Sans, Arial, sans-serif" font-size="8" fill="${textColor}">${esc(priority)}</text>`, assigneeBadge(card), '</svg>'].join('');
 }
 
 export async function createCard(env, issueKey, position, parentId = null) {

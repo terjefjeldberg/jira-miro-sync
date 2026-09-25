@@ -46,6 +46,7 @@ export async function getCardData(env, issueKey) {
     summary: String(f.summary ?? ''),
     priority: String(f.priority?.name ?? 'None'),
     assignee: String(f.assignee?.displayName ?? 'Unassigned'),
+    assigneeAccountId: String(f.assignee?.accountId ?? ''),
     workType: String(f.issuetype?.name ?? 'Unknown'),
     status: String(f.status?.name ?? ''),
     hotfixCandidate: isHotfixCandidate(f[fields.hotfixCandidate]),
