@@ -89,6 +89,7 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     assert.doesNotMatch(source, /rollbacks\.delete/);
     assert.doesNotMatch(source, /eventItem\?\{x:Number\(eventItem\.x\)/);
   }
+  if (path === '/panel.js') assert.match(source, /refresh-custom-cards/);
 }
 
 for (const path of ['/miro-app', '/miro-panel']) {

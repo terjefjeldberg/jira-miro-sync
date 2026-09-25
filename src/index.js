@@ -82,6 +82,24 @@ async function reconcileCustomCards(request, env) {
   return json({ ok: results.every(result => result.ok !== false), reconciled: results.length, results });
 }
 
+async function refreshCustomCards(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const boardId = String(parsed.body.boardId ?? '').trim();
+  if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
+    .slice(0, 50)
+    .map(entry => ({ issueKey: normalizeIssueKey(entry?.issueKey), itemId: String(entry?.itemId ?? '').trim() }))
+    .filter(entry => issueKeyIsValid(entry.issueKey, env) && entry.itemId);
+  const mappings = await registerMappings(env, entries);
+  const results = [];
+  for (const entry of mappings) {
+    const refreshed = await refreshCard(env, entry.issueKey);
+    results.push({ ...entry, ...refreshed });
+  }
+  return json({ ok: results.every(result => result.ok !== false), refreshed: results.filter(result => result.refreshed).length, results });
+}
+
 async function miroToJira(request, env) {
   const auth = await requireMiroJson(request, env); if (auth) return auth;
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
@@ -413,6 +431,7 @@ export default {
     if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env, ctx);
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);
+    if (method === 'POST' && path === '/refresh-custom-cards') return refreshCustomCards(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/rollback-custom-card') return rollbackCustomCard(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
