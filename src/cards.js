@@ -25,7 +25,12 @@ function hslToRgb(hue, saturation, lightness) {
   return [r + match, g + match, b + match].map(value => Math.round(value * 255));
 }
 
-function assigneeColor(accountId) {
+export function assigneeColor(accountId, override = '') {
+  if (/^#[0-9A-F]{6}$/i.test(String(override))) {
+    const [red, green, blue] = [1, 3, 5].map(index => parseInt(String(override).slice(index, index + 2), 16));
+    const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+    return { background: String(override).toUpperCase(), foreground: luminance > 0.52 ? '#1A1A1A' : '#FFFFFF' };
+  }
   const value = String(accountId ?? '').trim();
   if (!value) return UNASSIGNED_COLOR;
   let hash = 2166136261;
@@ -65,7 +70,7 @@ function fit(text, size, maxWidth) {
   return result ? result + suffix : suffix;
 }
 
-function normalizeAssigneeLabel(value) {
+export function normalizeAssigneeLabel(value) {
   return String(value ?? '')
     .replace(/[Ææ]/g, match => match === 'Æ' ? 'AE' : 'ae')
     .replace(/[Øø]/g, match => match === 'Ø' ? 'O' : 'o')
@@ -82,7 +87,7 @@ function assigneeBadge(card) {
   // layout as assignee names vary.
   const x = 106;
   const badgeWidth = 80;
-  const color = assigneeColor(card.assigneeAccountId);
+  const color = assigneeColor(card.assigneeAccountId, card.assigneeColorOverride);
   return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x}" y="80" width="${badgeWidth}" height="18" rx="4" fill="${color.background}"/><text x="146" y="92.8" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
 }
 

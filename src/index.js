@@ -1,7 +1,7 @@
-import { config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
+import { assigneeColorKey, config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
-import { createDirectCard, createIncomingCard, refreshCard, syncCommentIndicator } from './cards.js';
+import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
@@ -98,6 +98,40 @@ async function refreshCustomCards(request, env) {
     results.push({ ...entry, ...refreshed });
   }
   return json({ ok: results.every(result => result.ok !== false), refreshed: results.filter(result => result.refreshed).length, results });
+}
+
+async function assigneeColorLegend(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const boardId = String(parsed.body.boardId ?? '').trim();
+  if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  const entries = (Array.isArray(parsed.body.cards) ? parsed.body.cards : [])
+    .slice(0, 50)
+    .map(entry => ({ issueKey: normalizeIssueKey(entry?.issueKey), itemId: String(entry?.itemId ?? '').trim() }))
+    .filter(entry => issueKeyIsValid(entry.issueKey, env) && entry.itemId);
+  const mappings = await registerMappings(env, entries);
+  const users = new Map();
+  for (const entry of mappings) {
+    const live = await getCardData(env, entry.issueKey);
+    if (!live.ok) continue;
+    const accountId = String(live.assigneeAccountId ?? '').trim();
+    const name = normalizeAssigneeLabel(live.assignee) || 'Unassigned';
+    const key = accountId || 'unassigned';
+    if (!users.has(key)) users.set(key, { name, accountId, ...assigneeColor(accountId) });
+  }
+  return json({ ok: true, users: [...users.values()].sort((a, b) => a.name.localeCompare(b.name)) });
+}
+
+async function setAssigneeColor(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const boardId = String(parsed.body.boardId ?? '').trim();
+  const accountId = String(parsed.body.accountId ?? '').trim();
+  const color = String(parsed.body.color ?? '').trim().toUpperCase();
+  if (boardId !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  if (!accountId || !/^#[0-9A-F]{6}$/.test(color)) return json({ ok: false, reason: 'Invalid assignee color' }, 400);
+  await env.CARD_MAP.put(assigneeColorKey(accountId), color);
+  return json({ ok: true, accountId, color });
 }
 
 async function miroToJira(request, env) {
@@ -432,6 +466,8 @@ export default {
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);
     if (method === 'POST' && path === '/refresh-custom-cards') return refreshCustomCards(request, env);
+    if (method === 'POST' && path === '/assignee-color-legend') return assigneeColorLegend(request, env);
+    if (method === 'POST' && path === '/set-assignee-color') return setAssigneeColor(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
     if (method === 'POST' && path === '/rollback-custom-card') return rollbackCustomCard(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);

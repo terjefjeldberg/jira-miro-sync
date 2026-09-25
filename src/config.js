@@ -19,6 +19,8 @@ export const WORK_TYPE_COLORS = {
   'task/config/doc/test': '#89E8E0',
 };
 
+export const assigneeColorKey = accountId => `assignee-color:${String(accountId ?? '').trim()}`;
+
 export const FIXED_MIRO_USERS = {
   '3458764589815876301': 'Kristoffer Rask',
   '3074457347700027993': 'Tim Chipman',

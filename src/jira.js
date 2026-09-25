@@ -1,4 +1,4 @@
-import { config, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
+import { assigneeColorKey, config, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
 
 const DEFAULT_TEXT = 'Created from Miro sticky note';
 const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
@@ -40,13 +40,18 @@ export async function getCardData(env, issueKey) {
   const result = await getIssue(env, issueKey, ['summary', 'priority', 'assignee', 'issuetype', 'status', fields.originalMiroCreated, fields.hotfixCandidate]);
   if (!result.ok) return result;
   const f = result.issue?.fields || {};
+  const assigneeAccountId = String(f.assignee?.accountId ?? '');
+  const assigneeColorOverride = assigneeAccountId && env.CARD_MAP
+    ? String(await env.CARD_MAP.get(assigneeColorKey(assigneeAccountId)) ?? '').trim().toUpperCase()
+    : '';
   return {
     ok: true,
     issueKey: normalizeIssueKey(issueKey),
     summary: String(f.summary ?? ''),
     priority: String(f.priority?.name ?? 'None'),
     assignee: String(f.assignee?.displayName ?? 'Unassigned'),
-    assigneeAccountId: String(f.assignee?.accountId ?? ''),
+    assigneeAccountId,
+    assigneeColorOverride: /^#[0-9A-F]{6}$/.test(assigneeColorOverride) ? assigneeColorOverride : '',
     workType: String(f.issuetype?.name ?? 'Unknown'),
     status: String(f.status?.name ?? ''),
     hotfixCandidate: isHotfixCandidate(f[fields.hotfixCandidate]),
