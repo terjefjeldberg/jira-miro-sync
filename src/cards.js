@@ -67,7 +67,7 @@ function assigneeBadge(card) {
   const x = 106;
   const badgeWidth = 80;
   const color = assigneeColor(card.assigneeAccountId);
-  return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x}" y="80" width="${badgeWidth}" height="18" rx="4" fill="${color.background}"/><text x="181" y="92.8" text-anchor="end" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
+  return `<g aria-label="Assignee: ${esc(label)}"><rect x="${x}" y="80" width="${badgeWidth}" height="18" rx="4" fill="${color.background}"/><text x="146" y="92.8" text-anchor="middle" font-family="Open Sans, Arial, sans-serif" font-size="8" font-weight="700" fill="${color.foreground}">${esc(label)}</text></g>`;
 }
 
 function wrap(text, size, maxWidth) {

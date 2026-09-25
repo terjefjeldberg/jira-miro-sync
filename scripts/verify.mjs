@@ -35,6 +35,7 @@ assert.match(svg, /card/);
 assert.match(svg, /#FD9DE8/);
 assert.match(svg, /Assignee: Test User/);
 assert.match(svg, /<rect x="106" y="80" width="80" height="18"/);
+assert.match(svg, /<text x="146" y="92\.8" text-anchor="middle"/);
 
 const sameAccountDifferentName = cardSvg({
   issueKey: 'SN-123', summary: 'Verification card', priority: 'High', assignee: 'Renamed User',
