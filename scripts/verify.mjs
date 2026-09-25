@@ -51,6 +51,9 @@ assert.notEqual(badgeColor(svg), badgeColor(differentAccount));
 
 const unassignedSvg = cardSvg({ issueKey: 'SN-125', summary: 'Unassigned card', priority: 'Low', assignee: 'Unassigned', workType: 'Bug' });
 assert.match(unassignedSvg, /fill="#D1D5DB"/);
+const longAssigneeSvg = cardSvg({ issueKey: 'SN-127', summary: 'Long assignee', priority: 'Low', assignee: 'Christoffer Henne', assigneeAccountId: 'account-christoffer', workType: 'Bug' });
+assert.match(longAssigneeSvg, /Christoffer Hen\.\.\./);
+assert.doesNotMatch(longAssigneeSvg, /…/);
 
 const oldFetch = globalThis.fetch;
 globalThis.fetch = async url => {

@@ -56,12 +56,13 @@ function width(text, size) {
 function fit(text, size, maxWidth) {
   const value = String(text ?? '').trim();
   if (width(value, size) <= maxWidth) return value;
+  const suffix = '...';
   let result = '';
   for (const char of value) {
-    if (width(result + char + '…', size) > maxWidth) break;
+    if (width(result + char + suffix, size) > maxWidth) break;
     result += char;
   }
-  return result ? result + '…' : '…';
+  return result ? result + suffix : suffix;
 }
 
 function assigneeBadge(card) {
