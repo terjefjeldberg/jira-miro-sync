@@ -12,16 +12,24 @@ const CARD_HEIGHT = 123.12;
 // Keep this palette stable. The accountId hash below means a user's color is
 // independent of displayName, refresh order, and the current set of users.
 const ASSIGNEE_COLORS = [
-  { background: '#D6E4FF', foreground: '#12315B' },
-  { background: '#C6F6D5', foreground: '#155724' },
-  { background: '#E9D5FF', foreground: '#4A1D70' },
-  { background: '#FFE0B2', foreground: '#6B3500' },
-  { background: '#B2F5EA', foreground: '#075E54' },
-  { background: '#FBCFE8', foreground: '#7A1748' },
-  { background: '#FEF08A', foreground: '#5C4A00' },
-  { background: '#BAE6FD', foreground: '#0C4A6E' },
-  { background: '#FECACA', foreground: '#7F1D1D' },
-  { background: '#DDD6FE', foreground: '#312E81' },
+  { background: '#D7263D', foreground: '#FFFFFF' },
+  { background: '#F08A24', foreground: '#241300' },
+  { background: '#F2C94C', foreground: '#241F00' },
+  { background: '#7CB342', foreground: '#102000' },
+  { background: '#2EAD5B', foreground: '#FFFFFF' },
+  { background: '#00A878', foreground: '#FFFFFF' },
+  { background: '#00897B', foreground: '#FFFFFF' },
+  { background: '#00A6A6', foreground: '#FFFFFF' },
+  { background: '#168AAD', foreground: '#FFFFFF' },
+  { background: '#1976D2', foreground: '#FFFFFF' },
+  { background: '#3949AB', foreground: '#FFFFFF' },
+  { background: '#6C2BD9', foreground: '#FFFFFF' },
+  { background: '#A23EAA', foreground: '#FFFFFF' },
+  { background: '#D81B60', foreground: '#FFFFFF' },
+  { background: '#6D4C41', foreground: '#FFFFFF' },
+  { background: '#455A64', foreground: '#FFFFFF' },
+  { background: '#C0CA33', foreground: '#202300' },
+  { background: '#5E35B1', foreground: '#FFFFFF' },
 ];
 
 const UNASSIGNED_COLOR = { background: '#D1D5DB', foreground: '#374151' };
