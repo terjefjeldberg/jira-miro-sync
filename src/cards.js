@@ -9,30 +9,21 @@ function esc(value) {
 const CARD_WIDTH = 189;
 const CARD_HEIGHT = 123.12;
 
-// Keep this palette stable. The accountId hash below means a user's color is
-// independent of displayName, refresh order, and the current set of users.
-const ASSIGNEE_COLORS = [
-  { background: '#D7263D', foreground: '#FFFFFF' },
-  { background: '#F08A24', foreground: '#241300' },
-  { background: '#F2C94C', foreground: '#241F00' },
-  { background: '#7CB342', foreground: '#102000' },
-  { background: '#2EAD5B', foreground: '#FFFFFF' },
-  { background: '#00A878', foreground: '#FFFFFF' },
-  { background: '#00897B', foreground: '#FFFFFF' },
-  { background: '#00A6A6', foreground: '#FFFFFF' },
-  { background: '#168AAD', foreground: '#FFFFFF' },
-  { background: '#1976D2', foreground: '#FFFFFF' },
-  { background: '#3949AB', foreground: '#FFFFFF' },
-  { background: '#6C2BD9', foreground: '#FFFFFF' },
-  { background: '#A23EAA', foreground: '#FFFFFF' },
-  { background: '#D81B60', foreground: '#FFFFFF' },
-  { background: '#6D4C41', foreground: '#FFFFFF' },
-  { background: '#455A64', foreground: '#FFFFFF' },
-  { background: '#C0CA33', foreground: '#202300' },
-  { background: '#5E35B1', foreground: '#FFFFFF' },
-];
-
 const UNASSIGNED_COLOR = { background: '#D1D5DB', foreground: '#374151' };
+
+function hslToRgb(hue, saturation, lightness) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const segment = hue / 60;
+  const x = chroma * (1 - Math.abs(segment % 2 - 1));
+  const [r, g, b] = segment < 1 ? [chroma, x, 0]
+    : segment < 2 ? [x, chroma, 0]
+      : segment < 3 ? [0, chroma, x]
+        : segment < 4 ? [0, x, chroma]
+          : segment < 5 ? [x, 0, chroma]
+            : [chroma, 0, x];
+  const match = lightness - chroma / 2;
+  return [r + match, g + match, b + match].map(value => Math.round(value * 255));
+}
 
 function assigneeColor(accountId) {
   const value = String(accountId ?? '').trim();
@@ -42,7 +33,13 @@ function assigneeColor(accountId) {
     hash ^= char.codePointAt(0);
     hash = Math.imul(hash, 16777619);
   }
-  return ASSIGNEE_COLORS[(hash >>> 0) % ASSIGNEE_COLORS.length];
+  // Use the full hue wheel instead of a small palette so unrelated accountIds
+  // do not collapse into the same few visually similar colors.
+  const [red, green, blue] = hslToRgb((hash >>> 0) % 360, 0.68, 0.42);
+  const hex = channel => channel.toString(16).padStart(2, '0').toUpperCase();
+  const background = `#${hex(red)}${hex(green)}${hex(blue)}`;
+  const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+  return { background, foreground: luminance > 0.52 ? '#1A1A1A' : '#FFFFFF' };
 }
 
 function width(text, size) {
