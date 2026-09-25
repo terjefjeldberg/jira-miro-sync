@@ -54,6 +54,9 @@ assert.match(unassignedSvg, /fill="#D1D5DB"/);
 const longAssigneeSvg = cardSvg({ issueKey: 'SN-127', summary: 'Long assignee', priority: 'Low', assignee: 'Christoffer Henne', assigneeAccountId: 'account-christoffer', workType: 'Bug' });
 assert.match(longAssigneeSvg, /Christoffer Hen\.\.\./);
 assert.doesNotMatch(longAssigneeSvg, /…/);
+const accentedAssigneeSvg = cardSvg({ issueKey: 'SN-128', summary: 'Accented assignee', priority: 'Low', assignee: 'Manuel González', assigneeAccountId: 'account-manuel', workType: 'Bug' });
+assert.match(accentedAssigneeSvg, /Manuel Gonz/);
+assert.doesNotMatch(accentedAssigneeSvg, /González|�/);
 
 const oldFetch = globalThis.fetch;
 globalThis.fetch = async url => {

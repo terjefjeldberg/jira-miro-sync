@@ -65,8 +65,18 @@ function fit(text, size, maxWidth) {
   return result ? result + suffix : suffix;
 }
 
+function normalizeAssigneeLabel(value) {
+  return String(value ?? '')
+    .replace(/[Ææ]/g, match => match === 'Æ' ? 'AE' : 'ae')
+    .replace(/[Øø]/g, match => match === 'Ø' ? 'O' : 'o')
+    .replace(/[Åå]/g, match => match === 'Å' ? 'A' : 'a')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '');
+}
+
 function assigneeBadge(card) {
-  const label = fit(card.assignee, 8, 72) || 'Unassigned';
+  const label = fit(normalizeAssigneeLabel(card.assignee), 8, 72) || 'Unassigned';
   // This is intentionally a fixed slot, matching the red-marked area in the
   // card design. The label is fitted inside it rather than changing the card
   // layout as assignee names vary.
