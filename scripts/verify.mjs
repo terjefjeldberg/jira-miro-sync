@@ -114,5 +114,7 @@ assert.equal(missing.status, 404);
 
 const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(wrangler, /main\s*=\s*"src\/index\.js"/);
+const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+assert.match(indexSource, /assigneeColor\(accountId, live\.assigneeColorOverride\)/);
 
 console.log('Compact Worker verification passed.');

@@ -117,7 +117,9 @@ async function assigneeColorLegend(request, env) {
     const accountId = String(live.assigneeAccountId ?? '').trim();
     const name = normalizeAssigneeLabel(live.assignee) || 'Unassigned';
     const key = accountId || 'unassigned';
-    if (!users.has(key)) users.set(key, { name, accountId, ...assigneeColor(accountId) });
+    // Use the same persisted override as cardSvg(). Without this, the legend
+    // shows the deterministic default while the card shows the saved color.
+    if (!users.has(key)) users.set(key, { name, accountId, ...assigneeColor(accountId, live.assigneeColorOverride) });
   }
   return json({ ok: true, users: [...users.values()].sort((a, b) => a.name.localeCompare(b.name)) });
 }
