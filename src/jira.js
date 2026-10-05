@@ -3,6 +3,15 @@ import { assigneeColorKey, config, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS,
 const DEFAULT_TEXT = 'Created from Miro sticky note';
 const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
 const meaningful = value => value != null && (typeof value !== 'string' || value.trim()) && (!Array.isArray(value) || value.length) && (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length);
+// Miro and Jira can display the same person with different Unicode spelling
+// (for example, Gonzalez/González) or whitespace. Use a comparison key for
+// lookup only; preserve Jira's actual displayName in the returned data.
+const normalizedPersonName = value => String(value ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toLocaleLowerCase();
 
 export function jiraApi(env) {
   return {
@@ -248,7 +257,7 @@ export async function resolveMiroCommentAuthor(env, auth) {
 }
 
 async function jiraUserByName(env, displayName) {
-  const wanted = displayName.trim().toLocaleLowerCase();
+  const wanted = normalizedPersonName(displayName);
   const { base, headers } = jiraApi(env);
   const endpoints = [
     `/user/picker?query=${encodeURIComponent(displayName)}&showAvatar=false&excludeConnectUsers=true&maxResults=50`,
@@ -259,7 +268,7 @@ async function jiraUserByName(env, displayName) {
     if (!response.ok) continue;
     const body = await response.json();
     const users = Array.isArray(body) ? body : body?.users || [];
-    const matches = users.filter(user => user?.active !== false && String(user?.accountType ?? 'atlassian') !== 'app' && String(user?.accountId ?? '').trim() && String(user?.displayName ?? '').trim().toLocaleLowerCase() === wanted);
+    const matches = users.filter(user => user?.active !== false && String(user?.accountType ?? 'atlassian') !== 'app' && String(user?.accountId ?? '').trim() && normalizedPersonName(user?.displayName) === wanted);
     if (matches.length === 1) return { accountId: String(matches[0].accountId), displayName: String(matches[0].displayName ?? displayName), source: path.startsWith('/user/picker') ? 'user-picker' : 'assignable-search' };
   }
 
@@ -270,7 +279,7 @@ async function jiraUserByName(env, displayName) {
   const issues = (await response.json())?.issues || [];
   const matches = new Map();
   for (const issue of issues) for (const user of [issue?.fields?.reporter, issue?.fields?.assignee]) {
-    if (user && String(user?.displayName ?? '').trim().toLocaleLowerCase() === wanted && String(user?.accountId ?? '').trim()) matches.set(String(user.accountId), user);
+    if (user && normalizedPersonName(user?.displayName) === wanted && String(user?.accountId ?? '').trim()) matches.set(String(user.accountId), user);
   }
   if (matches.size !== 1) return null;
   const user = [...matches.values()][0];
@@ -306,7 +315,7 @@ export async function resolveReporter(env, stickyId, claimedCreatorId) {
   if (!creator.name) creator = (await miroScim(env, creator.id)) || creator;
   if (!creator.name) return { ok: false, status: 409, stage: 'reporter-miro-creator-name', reason: `Could not resolve Miro creator ${creator.id}`, miroCreatorId: creator.id };
 
-  const fixedAccountId = String(FIXED_JIRA_ACCOUNT_BY_NAME[String(creator.name).trim().toLowerCase()] ?? '').trim();
+  const fixedAccountId = String(FIXED_JIRA_ACCOUNT_BY_NAME[normalizedPersonName(creator.name)] ?? '').trim();
   if (fixedAccountId) {
     return { ok: true, creatorId: creator.id, creatorName: creator.name, accountId: fixedAccountId, source: 'fixed-miro-jira-account', createdAt: sticky.createdAt };
   }
