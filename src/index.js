@@ -3,7 +3,7 @@ import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './au
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
-import { renderApp, renderAppClient, renderCardMenu, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
+import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
 function changedWebhookFields(body) {
   const items = Array.isArray(body?.changelog?.items) ? body.changelog.items : [];
@@ -461,7 +461,6 @@ export default {
     if (method === 'GET' && path === '/panel.js') return renderPanelClient(env);
     if (method === 'GET' && path === '/comments.js') return renderCommentsClient();
     if (method === 'GET' && path === '/jira-comments-modal') return renderCommentsModal();
-    if (method === 'GET' && path === '/jira-card-menu') return renderCardMenu();
     if (method === 'GET' && path === '/jira-comments') return jiraComments(request, env);
     if (method === 'GET' && path === '/jira-comment-media') return jiraCommentMedia(request, env);
     if (method === 'POST' && path === '/jira-comments') return addJiraComment(request, env, ctx);

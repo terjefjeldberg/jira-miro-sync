@@ -5,14 +5,10 @@ import { text } from './auth.js';
 export { renderAppClient } from './app-client.js';
 export { renderPanelClient } from './panel-client.js';
 export { renderCommentsClient } from './comments-client.js';
-export function renderCardMenu() {
-  return text(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Card actions</title>${sdk}<style>*{box-sizing:border-box}body{margin:0;padding:12px;background:#fff;color:#1a1a1a;font-family:Arial,sans-serif}h3{margin:0 0 8px;font-size:15px}button{width:100%;margin-top:7px;padding:8px;border:0;border-radius:4px;background:#4262ff;color:#fff;font-weight:600;cursor:pointer}button.secondary{background:#333;color:#ddd}</style></head><body><h3>Jira card</h3><button id="comments">Open comments</button><button id="close" class="secondary">Close</button><script>(async()=>{const data=await miro.board.ui.getModalData();document.getElementById('comments').onclick=async()=>{await miro.board.ui.closeModal();await miro.board.ui.openModal({url:'/jira-comments-modal',data:{issueKey:String(data&&data.issueKey||''),itemId:String(data&&data.itemId||'')},width:760,height:800,fullscreen:false})};document.getElementById('close').onclick=()=>miro.board.ui.closeModal()})()</script></body></html>`, 'text/html; charset=utf-8');
-}
-
 const sdk = '<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>';
 
 export function renderApp() {
-  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=24"></script></body></html>`, 'text/html; charset=utf-8');
+  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=25"></script></body></html>`, 'text/html; charset=utf-8');
 }
 
 export function renderPanel() {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import worker from '../src/index.js';
 import { cardSvg } from '../src/cards.js';
 import { config, issueKeyIsValid } from '../src/config.js';
@@ -95,6 +96,37 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     assert.match(source, /previousParentId/);
     assert.doesNotMatch(source, /rollbacks\.delete/);
     assert.doesNotMatch(source, /eventItem\?\{x:Number\(eventItem\.x\)/);
+    const handlers = new Map(), modals = [], actions = [];
+    const card = { id: 'card-1', type: 'image', title: 'CUSTOM_JIRA_CARD:SN-123', x: 100, y: 100, width: 189, height: 102 };
+    let images = [];
+    const ui = {
+      on: async (name, handler) => { handlers.set(name, handler); },
+      canOpenModal: async () => true,
+      openModal: async options => { modals.push(options); },
+    };
+    await runInNewContext(source, {
+      miro: { board: {
+        ui,
+        experimental: { action: { register: async action => { actions.push(action); } } },
+        get: async () => images,
+        getById: async () => card,
+        getSelection: async () => [card],
+        getInfo: async () => ({ id: 'board-test' }),
+      } },
+      setTimeout: () => 1, setInterval: () => 1, clearTimeout: () => {}, clearInterval: () => {},
+      console,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    images = [card];
+    await handlers.get('selection:update')({ items: [card] });
+    assert.equal(modals.length, 0, 'Selecting a Jira card must leave the board interactive');
+    assert.equal(actions[0]?.event, 'open-jira-comments');
+    assert.equal(actions[0]?.predicate?.title?.$regex, '^CUSTOM_JIRA_CARD:SN-[0-9]+$');
+    await handlers.get('custom:open-jira-comments')({ items: [card] });
+    assert.equal(modals.length, 1, 'The card action must open comments');
+    assert.equal(modals[0].fullscreen, true);
+    assert.equal(modals[0].data.issueKey, 'SN-123');
+    assert.equal(modals[0].data.itemId, 'card-1');
   }
   if (path === '/panel.js') {
     assert.match(source, /refresh-custom-cards/);
