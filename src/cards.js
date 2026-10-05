@@ -259,9 +259,9 @@ export async function createIncomingCard(env, issueKey) {
   return { ...created, itemId: dedupe.keptItemId, position, dedupe };
 }
 
-export async function refreshCard(env, issueKey, existingData = null) {
+export async function refreshCard(env, issueKey, existingData = null, selectedItemId = '') {
   issueKey = normalizeIssueKey(issueKey);
-  const itemId = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+  const itemId = String(selectedItemId || (await env.CARD_MAP.get(customMapKey(issueKey)) ?? '')).trim();
   if (!itemId) return { ok: true, refreshed: false, mapped: false };
 
   const read = await getItem(env, itemId);

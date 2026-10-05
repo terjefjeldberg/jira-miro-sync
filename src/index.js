@@ -91,10 +91,10 @@ async function refreshCustomCards(request, env) {
     .slice(0, 50)
     .map(entry => ({ issueKey: normalizeIssueKey(entry?.issueKey), itemId: String(entry?.itemId ?? '').trim() }))
     .filter(entry => issueKeyIsValid(entry.issueKey, env) && entry.itemId);
-  const mappings = await registerMappings(env, entries);
+  const mappings = parsed.body.selected === true ? entries : await registerMappings(env, entries);
   const results = [];
   for (const entry of mappings) {
-    const refreshed = await refreshCard(env, entry.issueKey);
+    const refreshed = await refreshCard(env, entry.issueKey, null, parsed.body.selected === true ? entry.itemId : '');
     results.push({ ...entry, ...refreshed });
   }
   return json({ ok: results.every(result => result.ok !== false), refreshed: results.filter(result => result.refreshed).length, results });
