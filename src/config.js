@@ -39,6 +39,7 @@ export const FIXED_MIRO_USERS = {
   '3074457346177899037': 'Lirian Rusiti',
   '3074457345929923505': 'Andrea Dallera',
   '3458764634714855820': 'Gjermund Madsen',
+  '3458764636162900745': 'Gjermund Madsen',
   '3458764636149340448': 'Prem Wycisk',
   '3458764648050732223': 'Viktor Österdahl',
   '3458764666715690327': 'Josef Aden',
@@ -57,6 +58,7 @@ export const FIXED_JIRA_ACCOUNT_BY_NAME = {
 // Use the Miro creator ID when a Jira account cannot be found by display name.
 export const FIXED_JIRA_ACCOUNT_BY_MIRO_ID = {
   '3458764634714855820': '712020:0c510c44-97d9-40c1-b8e1-0b99638dc289', // Gjermund Madsen
+  '3458764636162900745': '712020:0c510c44-97d9-40c1-b8e1-0b99638dc289', // Creator ID from the selected sticky
 };
 
 const asNumber = (value, fallback) => {

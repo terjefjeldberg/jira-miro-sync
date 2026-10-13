@@ -73,15 +73,15 @@ assert.equal(cardData.assignee, 'Stable Name');
 assert.equal(cardData.assigneeAccountId, 'account-123');
 globalThis.fetch = oldFetch;
 
-// Gjermund's Miro creator ID resolves without a name-based Jira search.
+// The creator ID read from the selected sticky resolves without a Jira name search.
 globalThis.fetch = async url => {
   assert.match(String(url), /api\.miro\.com\/v2\/boards\/board-test\/items\/sticky-gjermund$/);
-  return new Response(JSON.stringify({ type: 'sticky_note', createdBy: { id: '3458764634714855820' }, createdAt: '2026-10-13T08:00:00Z' }), { status: 200 });
+  return new Response(JSON.stringify({ type: 'sticky_note', createdBy: { id: '3458764636162900745', name: 'Gjermund' }, createdAt: '2026-10-13T08:00:00Z' }), { status: 200 });
 };
-const gjermundReporter = await resolveReporter({ ...env, MIRO_TOKEN: 'miro-token' }, 'sticky-gjermund', '3458764634714855820');
+const gjermundReporter = await resolveReporter({ ...env, MIRO_TOKEN: 'miro-token' }, 'sticky-gjermund', '3458764636162900745');
 assert.equal(gjermundReporter.ok, true);
 assert.equal(gjermundReporter.accountId, '712020:0c510c44-97d9-40c1-b8e1-0b99638dc289');
-assert.equal(gjermundReporter.creatorName, 'Gjermund Madsen');
+assert.equal(gjermundReporter.creatorName, 'Gjermund');
 assert.equal(gjermundReporter.source, 'fixed-miro-jira-account');
 globalThis.fetch = oldFetch;
 
