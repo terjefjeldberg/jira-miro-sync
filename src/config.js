@@ -54,6 +54,11 @@ export const FIXED_JIRA_ACCOUNT_BY_NAME = {
   'prem wycisk': '712020:22535b37-56d1-42fb-9a00-5c61d761f273',
 };
 
+// Use the Miro creator ID when a Jira account cannot be found by display name.
+export const FIXED_JIRA_ACCOUNT_BY_MIRO_ID = {
+  '3458764634714855820': '712020:0c510c44-97d9-40c1-b8e1-0b99638dc289', // Gjermund Madsen
+};
+
 const asNumber = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;

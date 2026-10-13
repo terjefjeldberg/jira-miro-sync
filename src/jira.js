@@ -1,4 +1,4 @@
-import { assigneeColorKey, config, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
+import { assigneeColorKey, config, FIXED_JIRA_ACCOUNT_BY_MIRO_ID, FIXED_JIRA_ACCOUNT_BY_NAME, FIXED_MIRO_USERS, normalizeIssueKey, normalizeStatus, reporterMapKey } from './config.js';
 
 const DEFAULT_TEXT = 'Created from Miro sticky note';
 const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
@@ -306,6 +306,12 @@ export async function resolveReporter(env, stickyId, claimedCreatorId) {
   if (claimedCreatorId && creator.id && creator.id !== String(claimedCreatorId)) return { ok: false, status: 409, stage: 'reporter-verify-created-by', reason: 'Miro createdBy did not match the selected sticky' };
   if (!creator.id) creator.id = String(claimedCreatorId ?? '').trim();
   if (!creator.id) return { ok: false, status: 409, stage: 'reporter-miro-creator-id', reason: 'Miro did not return a creator ID for the sticky note' };
+
+  const fixedMiroAccountId = FIXED_JIRA_ACCOUNT_BY_MIRO_ID[creator.id];
+  if (fixedMiroAccountId) return {
+    ok: true, creatorId: creator.id, creatorName: creator.name || FIXED_MIRO_USERS[creator.id] || '',
+    accountId: fixedMiroAccountId, source: 'fixed-miro-jira-account', createdAt: sticky.createdAt,
+  };
 
   const cached = env.CARD_MAP ? await env.CARD_MAP.get(reporterMapKey(creator.id), 'json').catch(() => null) : null;
   if (cached?.accountId) return { ok: true, creatorId: creator.id, creatorName: String(cached.displayName ?? ''), accountId: String(cached.accountId), source: 'kv-cache', createdAt: sticky.createdAt };
