@@ -1,6 +1,6 @@
 import { assigneeColorKey, config, customMapKey, directPendingKey, freezeKey, issueKeyIsValid, normalizeIssueKey, stickyIssueKey } from './config.js';
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
-import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
+import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getCardSummaries, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
 import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
@@ -98,6 +98,19 @@ async function refreshCustomCards(request, env) {
     results.push({ ...entry, ...refreshed });
   }
   return json({ ok: results.every(result => result.ok !== false), refreshed: results.filter(result => result.refreshed).length, results });
+}
+
+async function searchCardSummaries(request, env) {
+  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  if (String(parsed.body.boardId ?? '').trim() !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  const cards = Array.isArray(parsed.body.cards) ? parsed.body.cards : [];
+  if (cards.length > 25) return json({ ok: false, reason: 'Too many cards in one search batch' }, 400);
+  const candidates = [...new Set(cards.map(card => normalizeIssueKey(card?.issueKey)).filter(key => issueKeyIsValid(key, env)))];
+  const mapped = await Promise.all(candidates.map(async key => ({ key, itemId: await env.CARD_MAP.get(customMapKey(key)) })));
+  const keys = mapped.filter(entry => entry.itemId).map(entry => entry.key);
+  const result = await getCardSummaries(env, keys);
+  return json(result, result.ok ? 200 : 502);
 }
 
 async function assigneeColorLegend(request, env) {
@@ -467,6 +480,7 @@ export default {
     if (method === 'POST' && path === '/register-custom-cards') return register(request, env);
     if (method === 'POST' && path === '/reconcile-custom-cards') return reconcileCustomCards(request, env);
     if (method === 'POST' && path === '/refresh-custom-cards') return refreshCustomCards(request, env);
+    if (method === 'POST' && path === '/search-card-summaries') return searchCardSummaries(request, env);
     if (method === 'POST' && path === '/assignee-color-legend') return assigneeColorLegend(request, env);
     if (method === 'POST' && path === '/set-assignee-color') return setAssigneeColor(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);

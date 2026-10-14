@@ -96,6 +96,44 @@ function token(secret) {
   return `${header}.${payload}.${signature}`;
 }
 
+// Panel search reads only Jira summaries for custom cards on the selected board.
+{
+  const secret = 'miro-secret';
+  const env = { ...baseEnv, MIRO_CLIENT_SECRET: secret, CARD_MAP: new FakeKv({
+    [customMapKey('SN-8')]: 'img-8',
+    [customMapKey('SN-9')]: 'img-9',
+  }) };
+  const oldFetch = globalThis.fetch;
+  const searches = [];
+  globalThis.fetch = async (url, init = {}) => {
+    assert.match(String(url), /\/search\/jql$/);
+    assert.equal(init.method, 'POST');
+    const query = JSON.parse(init.body);
+    searches.push(query);
+    if (!query.nextPageToken) return json({ issues: [{ key: 'SN-8', fields: { summary: 'Find this card' } }], nextPageToken: 'page-2' });
+    return json({ issues: [{ key: 'SN-9', fields: { summary: 'Another summary' } }] });
+  };
+  const request = (boardId, cards) => new Request('https://worker.test/search-card-summaries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token(secret)}` },
+    body: JSON.stringify({ boardId, cards }),
+  });
+  const denied = await worker.fetch(request('other-board', [{ issueKey: 'SN-8' }]), env);
+  assert.equal(denied.status, 403);
+  const response = await worker.fetch(request('board', [{ issueKey: 'SN-8' }, { issueKey: 'SN-9' }, { issueKey: 'XX-1' }, { issueKey: 'SN-10' }]), env);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.cards, [
+    { issueKey: 'SN-8', summary: 'Find this card' },
+    { issueKey: 'SN-9', summary: 'Another summary' },
+  ]);
+  assert.equal(searches.length, 2);
+  assert.equal(searches[0].jql, 'key in (SN-8,SN-9)');
+  assert.deepEqual(searches[0].fields, ['summary']);
+  assert.equal(searches[1].nextPageToken, 'page-2');
+  globalThis.fetch = oldFetch;
+}
+
 // While sticky conversion is pending, Jira creation/status webhooks must not
 // move an already-created direct card away from the sticky's exact position.
 {

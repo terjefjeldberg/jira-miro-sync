@@ -144,6 +144,32 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     assert.match(source, /refresh-custom-cards/);
     assert.match(source, /assignee-color-legend/);
     assert.match(source, /set-assignee-color/);
+    assert.match(source, /search-card-summaries/);
+    const element = () => ({ children: [], events: {}, textContent: '', value: '',
+      addEventListener(name, handler) { this.events[name] = handler; },
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; },
+    });
+    const ids = Object.fromEntries(['convertButton', 'refreshCardsButton', 'refreshSelectedCardsButton', 'status', 'cardSearch', 'searchMessage', 'searchResults', 'searchReload', 'legend'].map(id => [id, element()]));
+    const document = { getElementById: id => ids[id] || null, querySelector: () => null, createElement: element };
+    const card = { id: 'card-1', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-123' } };
+    const zoomed = [];
+    let closed = false;
+    runInNewContext(source, { document, miro: { board: {
+      get: async () => [card], getById: async () => card, getInfo: async () => ({ id: 'board-test' }),
+      getIdToken: async () => 'token', viewport: { zoomTo: async item => zoomed.push(item) },
+      ui: { closePanel: async () => { closed = true; } },
+    } }, fetch: async (_url, init) => {
+      assert.equal(JSON.parse(init.body).cards[0].issueKey, 'SN-123');
+      return new Response(JSON.stringify({ ok: true, cards: [{ issueKey: 'SN-123', summary: 'Searchable Jira summary' }] }), { status: 200 });
+    }, console });
+    ids.cardSearch.value = 'searchable';
+    await ids.cardSearch.events.input();
+    assert.equal(ids.searchResults.children.length, 1);
+    assert.equal(ids.searchResults.children[0].children[1].textContent, 'Searchable Jira summary');
+    await ids.searchResults.children[0].events.click();
+    assert.equal(zoomed[0], card);
+    assert.equal(closed, true);
   }
 }
 
@@ -152,6 +178,9 @@ for (const path of ['/miro-app', '/miro-panel']) {
   assert.equal(response.status, 200);
   assert.match(await response.text(), /miro\.com\/app\/static\/sdk\/v2\/miro\.js/);
 }
+const panelMarkup = await (await worker.fetch(new Request('https://worker.test/miro-panel'), env)).text();
+assert.match(panelMarkup, /id="cardSearch"/);
+assert.match(panelMarkup, /id="searchResults"/);
 
 const missing = await worker.fetch(new Request('https://worker.test/no-such-route'), env);
 assert.equal(missing.status, 404);

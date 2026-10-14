@@ -24,6 +24,53 @@ async function removeConvertedSticky(sticky){const id=String(sticky&&sticky.id||
 async function convert(sticky){let positionItem=sticky;for(let attempt=0;attempt<3;attempt++){const fresh=await miro.board.getById(String(sticky&&sticky.id||'')).catch(()=>null);const freshX=Number(fresh&&fresh.x),freshY=Number(fresh&&fresh.y),nestedX=Number(fresh&&fresh.position&&fresh.position.x),nestedY=Number(fresh&&fresh.position&&fresh.position.y),selectedX=Number(sticky&&sticky.x),selectedY=Number(sticky&&sticky.y);const candidateX=Number.isFinite(nestedX)&&((freshX===0&&nestedX!==0)||!Number.isFinite(freshX))?nestedX:freshX,candidateY=Number.isFinite(nestedY)&&((freshY===0&&nestedY!==0)||!Number.isFinite(freshY))?nestedY:freshY;if(fresh&&Number.isFinite(candidateX)&&Number.isFinite(candidateY)&&(candidateX!==0||candidateY!==0)){positionItem=fresh;break}if(Number.isFinite(selectedX)&&Number.isFinite(selectedY)&&(selectedX!==0||selectedY!==0)){positionItem=sticky;break}if(attempt<2)await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)))}const summary=plain(sticky.content);if(!summary)throw new Error('This sticky note has no text.');const pos=await canvas(positionItem);if(pos.x===0&&pos.y===0)throw new Error('Could not read a valid sticky position from Miro. No Jira issue or card was created.');const want=await desired(sticky,pos),workType=colorMap[String(sticky&&sticky.style&&sticky.style.fillColor||'').trim().toLowerCase()]||'Bug',stickyColor=String(sticky&&sticky.style&&sticky.style.fillColor||'');let state;try{state=await sticky.getMetadata(META)}catch{}let issueKey=state&&state.issueKey?String(state.issueKey):'';if(!issueKey){const created=await jsonResult(await post('/sticky-to-jira',{summary,workType,stickyId:String(sticky.id),createdBy:creator(sticky.createdBy)}),'Could not create Jira issue.');issueKey=String(created.issueKey);await saveConversionMetadata(sticky,{issueKey,stage:'jira-created',workType,stickyColor,desiredStatus:want||null})}if(want)await jsonResult(await post('/conversion-set-status',{issueKey,desiredStatus:want}),'Could not set Jira status.');const card=await jsonResult(await post('/conversion-direct-card',{issueKey,x:pos.x,y:pos.y}),'Could not create Miro card at the note position.');await saveConversionMetadata(sticky,{issueKey,stage:'card-created',customCardFrameId:String(card.itemId),workType,stickyColor,desiredStatus:want||null});await removeConvertedSticky(sticky);return{issueKey,desiredStatus:want}}
 function cardFromItem(item){const title=String(item&&((item.data&&item.data.title)||item.title||'')).trim(),match=title.match(/^CUSTOM_JIRA_CARD:(${cfg.jiraProjectKey}-\d+)$/i);return match?{issueKey:match[1].toUpperCase(),itemId:String(item.id)}:null}
 async function currentCards(){return (await miro.board.get({type:'image'})||[]).map(cardFromItem).filter(Boolean)}
+const searchInput=document.getElementById('cardSearch'),searchMessage=document.getElementById('searchMessage'),searchResults=document.getElementById('searchResults'),searchReload=document.getElementById('searchReload');
+let searchIndex=null,searchLoading=null;
+const searchable=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase();
+async function loadSearchIndex(){
+  if(searchIndex)return searchIndex;
+  if(searchLoading)return searchLoading;
+  searchMessage.textContent='Loading Jira card summaries…';
+  searchLoading=(async()=>{
+    const info=await miro.board.getInfo(),cards=await currentCards(),summaries=new Map();
+    const unique=[...new Map(cards.map(card=>[card.issueKey,card])).values()];
+    for(let i=0;i<unique.length;i+=25){
+      searchMessage.textContent='Loading Jira card summaries… '+Math.min(i+25,unique.length)+' of '+unique.length;
+      const result=await jsonResult(await post('/search-card-summaries',{boardId:info.id,cards:unique.slice(i,i+25)}),'Could not load Jira summaries.');
+      for(const entry of result.cards||[])summaries.set(entry.issueKey,String(entry.summary||''));
+    }
+    searchIndex=cards.filter(card=>summaries.has(card.issueKey)).map(card=>({...card,summary:summaries.get(card.issueKey)}));
+    return searchIndex;
+  })();
+  try{return await searchLoading}finally{searchLoading=null}
+}
+function showSearchResults(){
+  const query=searchable(searchInput.value.trim());
+  searchResults.replaceChildren();
+  if(!query){searchMessage.textContent='';return}
+  if(!searchIndex){searchMessage.textContent='Loading Jira card summaries…';return}
+  const matches=searchIndex.filter(card=>searchable(card.issueKey+' '+card.summary).includes(query));
+  searchMessage.textContent=matches.length?matches.length+' matching card'+(matches.length===1?'':'s')+(matches.length>30?' (showing first 30)':'')+'.':'No matching Jira cards on this board.';
+  for(const card of matches.slice(0,30)){
+    const hit=document.createElement('button');hit.type='button';hit.className='search-result';
+    const key=document.createElement('strong');key.textContent=card.issueKey;
+    const summary=document.createElement('span');summary.textContent=card.summary||'(no summary)';
+    hit.append(key,summary);
+    hit.addEventListener('click',async()=>{try{
+      const item=await miro.board.getById(card.itemId);
+      if(!item||cardFromItem(item)?.issueKey!==card.issueKey)throw new Error('This card is no longer on the board. Reload summaries and try again.');
+      await miro.board.viewport.zoomTo(item);
+      if(miro.board.ui&&typeof miro.board.ui.closePanel==='function')await miro.board.ui.closePanel();
+    }catch(error){searchMessage.textContent=error&&error.message||'Could not open this card.'}});
+    searchResults.append(hit);
+  }
+}
+if(searchInput)searchInput.addEventListener('input',async()=>{
+  if(!searchInput.value.trim()){showSearchResults();return}
+  if(!searchIndex)try{await loadSearchIndex()}catch(error){searchMessage.textContent=error&&error.message||'Could not load Jira summaries.';return}
+  showSearchResults();
+});
+if(searchReload)searchReload.addEventListener('click',async()=>{searchIndex=null;try{await loadSearchIndex();showSearchResults()}catch(error){searchMessage.textContent=error&&error.message||'Could not reload Jira summaries.'}});
 async function selectedCards(){return ((await miro.board.getSelection())||[]).map(cardFromItem).filter(Boolean)}
 async function refreshCards(cards,source){const info=await miro.board.getInfo();if(!cards.length){status(source==='selected'?'Select one or more Jira custom cards first.':'No Jira custom cards found.','error');return}refreshButton.disabled=true;button.disabled=true;const selectedRefreshButton=document.getElementById('refreshSelectedCardsButton');if(selectedRefreshButton)selectedRefreshButton.disabled=true;let refreshed=0,failed=0,errors=[];try{for(let i=0;i<cards.length;i+=25){const batch=cards.slice(i,i+25);status('Refreshing '+Math.min(i+batch.length,cards.length)+' of '+cards.length+' cards…');const result=await jsonResult(await post('/refresh-custom-cards',{boardId:info.id,cards:batch,selected:source==='selected'}),'Could not refresh Jira cards.');refreshed+=Number(result.refreshed||0);failed+=batch.length-Number(result.refreshed||0);errors.push(...(result.results||[]).filter(item=>item.ok===false).map(item=>item.issueKey+': '+(item.stage||'refresh failed')+(item.error?' — '+item.error:'')))}const message='Refreshed '+refreshed+' of '+cards.length+' Jira cards.'+(failed?' '+failed+' failed.'+(errors.length?'\n'+errors.join('\n'):''):'');status(message,failed?'error':'success')}finally{refreshButton.disabled=false;button.disabled=false;if(selectedRefreshButton)selectedRefreshButton.disabled=false}}
 async function refreshExistingCards(){return refreshCards(await currentCards(),'all')}

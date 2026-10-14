@@ -32,6 +32,31 @@ export async function getIssue(env, issueKey, fields) {
   return { ok: true, issue: await response.json() };
 }
 
+export async function getCardSummaries(env, issueKeys) {
+  const keys = [...new Set(issueKeys.map(normalizeIssueKey))].filter(key => /^[A-Z]+-\d+$/.test(key)).slice(0, 50);
+  if (!keys.length) return { ok: true, cards: [] };
+  const cards = new Map();
+  let nextPageToken = '';
+  for (let page = 0; page < 10; page += 1) {
+    const body = { jql: `key in (${keys.join(',')})`, fields: ['summary'], maxResults: 50 };
+    if (nextPageToken) body.nextPageToken = nextPageToken;
+    const response = await request(env, '/search/jql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) return { ok: false, status: response.status, error: await response.text() };
+    const result = await response.json();
+    for (const issue of result.issues || []) {
+      const key = normalizeIssueKey(issue.key);
+      if (keys.includes(key)) cards.set(key, { issueKey: key, summary: String(issue.fields?.summary ?? '') });
+    }
+    nextPageToken = String(result.nextPageToken ?? '');
+    if (!nextPageToken) return { ok: true, cards: [...cards.values()] };
+  }
+  return { ok: false, status: 502, reason: 'Jira summary search returned too many pages' };
+}
+
 function isHotfixCandidate(value) {
   const values = Array.isArray(value) ? value : [value];
   return values.some(item => {
