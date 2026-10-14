@@ -155,11 +155,13 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     const card = { id: 'card-1', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-123' } };
     const zoomed = [];
     let closed = false;
+    let summaryRequests = 0;
     runInNewContext(source, { document, miro: { board: {
       get: async () => [card], getById: async () => card, getInfo: async () => ({ id: 'board-test' }),
       getIdToken: async () => 'token', viewport: { zoomTo: async item => zoomed.push(item) },
       ui: { closePanel: async () => { closed = true; } },
     } }, fetch: async (_url, init) => {
+      summaryRequests += 1;
       assert.equal(JSON.parse(init.body).cards[0].issueKey, 'SN-123');
       return new Response(JSON.stringify({ ok: true, cards: [{ issueKey: 'SN-123', summary: 'Searchable Jira summary' }] }), { status: 200 });
     }, console });
@@ -169,7 +171,11 @@ for (const path of ['/app.js', '/panel.js', '/comments.js']) {
     assert.equal(ids.searchResults.children[0].children[1].textContent, 'Searchable Jira summary');
     await ids.searchResults.children[0].events.click();
     assert.equal(zoomed[0], card);
-    assert.equal(closed, true);
+    assert.equal(closed, false, 'The search panel should remain open after zooming');
+    ids.cardSearch.value = 'SN-123';
+    await ids.cardSearch.events.input();
+    assert.equal(ids.searchResults.children.length, 1);
+    assert.equal(summaryRequests, 1, 'A second search should reuse the loaded summaries');
   }
 }
 

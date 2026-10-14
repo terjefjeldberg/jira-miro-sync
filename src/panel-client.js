@@ -60,7 +60,6 @@ function showSearchResults(){
       const item=await miro.board.getById(card.itemId);
       if(!item||cardFromItem(item)?.issueKey!==card.issueKey)throw new Error('This card is no longer on the board. Reload summaries and try again.');
       await miro.board.viewport.zoomTo(item);
-      if(miro.board.ui&&typeof miro.board.ui.closePanel==='function')await miro.board.ui.closePanel();
     }catch(error){searchMessage.textContent=error&&error.message||'Could not open this card.'}});
     searchResults.append(hit);
   }
