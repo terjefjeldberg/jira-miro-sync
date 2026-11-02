@@ -3,6 +3,14 @@ main = "src/index.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
 
+[[durable_objects.bindings]]
+name = "MIRO_CARD_DELIVERY"
+class_name = "MiroCardDelivery"
+
+[[migrations]]
+tag = "v1-card-delivery"
+new_sqlite_classes = ["MiroCardDelivery"]
+
 [observability]
 enabled = true
 

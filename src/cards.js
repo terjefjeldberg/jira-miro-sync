@@ -153,6 +153,23 @@ export async function createCard(env, issueKey, position, parentId = null) {
   issueKey = normalizeIssueKey(issueKey);
   const existing = String(await env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
   if (existing) return { ok: true, created: false, mapped: true, itemId: existing };
+  // Recover an upload whose response was lost. Never interpret a failed or
+  // incomplete board scan as proof that no image exists.
+  if (env.MIRO_DELIVERY_STORAGE) {
+    const uploadStartedAt = await env.MIRO_DELIVERY_STORAGE.get('uploadStartedAt');
+    if (uploadStartedAt && Date.now() - uploadStartedAt < 60_000) {
+      return { ok: false, status: 502, stage: 'delivery-await-uncertain-upload' };
+    }
+    const listed = await listItems(env, { type: 'image' });
+    if (!listed.ok) return { ok: false, status: 502, stage: 'delivery-recover-card', error: listed.error };
+    const recovered = listed.items.find(item => issueKeyFromImage(item) === issueKey);
+    if (recovered) {
+      const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width }, position: { x: Number(position.x), y: Number(position.y), origin: 'center' } };
+      if (parentId) placement.parent = { id: parentId };
+      await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId: String(recovered.id), placement, positioned: false });
+      return { ok: false, status: 502, stage: 'delivery-recovered-upload', itemId: String(recovered.id) };
+    }
+  }
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, status: 502, stage: 'read-jira-data', jiraStatus: data.status, error: data.error };
   const patch = { position: { x: Number(position.x), y: Number(position.y), origin: 'center' } };

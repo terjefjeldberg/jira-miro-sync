@@ -20,7 +20,13 @@ There are no patch-on-patch wrapper files. A behavior should have one implementa
 
 ### Jira → Miro
 
-`POST /` receives Jira Automation webhooks. The Worker:
+`POST /` receives Jira Automation webhooks. Creation / manual `ensure_card`
+events are persisted in `MIRO_CARD_DELIVERY`, one Durable Object per board and
+issue. HTTP 202 means accepted/pending, never confirmed. An alarm processes the
+job and reads the actual image back from Miro, checking its issue key, geometry
+and (for a new upload) Incoming parent before logging `Miro card delivery
+confirmed` with the issue key, board, item ID and timestamp. Other webhooks use
+the queue below. The Worker:
 
 1. validates `X-Webhook-Secret`;
 2. reads Jira's live status;
@@ -66,6 +72,7 @@ Secrets and environment-specific IDs belong in Cloudflare variables, not busines
 Required bindings/variables:
 
 - `CARD_MAP` KV namespace
+- `MIRO_CARD_DELIVERY` SQLite Durable Object binding and `v1-card-delivery` migration
 - `MIRO_CLIENT_SECRET`
 - `MIRO_TOKEN`
 - `MIRO_BOARD_ID`
@@ -88,6 +95,19 @@ Optional overrides (current dev values are defaults):
 - `JIRA_FIELD_HOTFIX_CANDIDATE`
 
 Production currently uses project key `ROV`, Worker `jira-to-miro-prod` and queue `jira-to-miro-prod-events`.
+
+Card delivery has no application retry count or expiry. Failed jobs retain their
+payload and last error and reschedule themselves after 15, 30, 60 seconds, then
+increasing delays up to one hour. The next alarm is saved before external I/O.
+Credentials/permissions and full Incoming errors also remain pending until fixed.
+Known upload IDs survive placement failures and are repaired instead of deleted
+and uploaded again. Unknown upload outcomes get a visibility grace period and a
+complete board scan before another upload; an incomplete scan fails closed.
+Miro has no transactional exactly-once upload contract, so a lost response plus
+delayed visibility can still produce duplicates; normal Incoming deduplication
+remains in place. Queue retry exhaustion no longer discards creation obligations.
+Existing incidents must be submitted once more with `event: "ensure_card"` after
+deploying; they cannot be reconstructed from already discarded queue messages.
 Functional area and Test description are validated by the Jira transition to Functional Review, not during issue creation. Sticky creation only applies the Bug-specific defaults when the work type is Bug.
 
 Jira Automation web requests must include `"event":"created"` in the rule that runs when a work item is created. Status and field-sync rules must omit that marker (or use another event value). This prevents an update to an existing Jira issue from creating a new Incoming card.

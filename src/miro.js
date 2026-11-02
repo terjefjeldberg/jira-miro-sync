@@ -29,19 +29,30 @@ export async function uploadSvg(env, issueKey, svg, patch, title = `CUSTOM_JIRA_
   const form = new FormData();
   form.append('resource', new Blob([new TextEncoder().encode(svg)], { type: 'image/svg+xml' }), `${issueKey}.svg`);
   form.append('data', JSON.stringify({ title }));
+  if (env.MIRO_DELIVERY_STORAGE) await env.MIRO_DELIVERY_STORAGE.put('uploadStartedAt', Date.now());
   const upload = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images`, { method: 'POST', headers: miroHeaders(env), body: form });
   if (!upload.ok) return { ok: false, status: 502, stage: 'miro-image-upload', miroStatus: upload.status, error: await upload.text() };
   const itemId = String((await upload.json())?.id ?? '').trim();
   if (!itemId) return { ok: false, status: 502, stage: 'miro-image-id', reason: 'Miro returned no image ID' };
+  const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width }, ...patch };
+  // Keep the upload ID before placement: a Miro 5xx must not make the next
+  // attempt upload another image or delete an image that may already exist.
+  if (env.MIRO_DELIVERY_STORAGE) {
+    await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId, placement, positioned: false });
+    await env.MIRO_DELIVERY_STORAGE.delete('uploadStartedAt');
+  }
   const positioned = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`, {
     method: 'PATCH',
     headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width }, ...patch }),
+    body: JSON.stringify(placement),
   });
   if (!positioned.ok) {
     const error = await positioned.text();
-    await deleteImage(env, itemId).catch(() => {});
+    if (!env.MIRO_DELIVERY_STORAGE) await deleteImage(env, itemId).catch(() => {});
     return { ok: false, status: 502, stage: 'miro-image-position', miroStatus: positioned.status, error };
+  }
+  if (env.MIRO_DELIVERY_STORAGE) {
+    await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId, placement, positioned: true });
   }
   return { ok: true, itemId };
 }
@@ -76,9 +87,44 @@ export async function listItems(env, params = {}) {
     const body = await response.json();
     result.push(...(Array.isArray(body?.data) ? body.data : []));
     cursor = String(body?.cursor ?? '').trim();
-    if (!cursor) break;
+    if (!cursor) return { ok: true, items: result };
   }
-  return { ok: true, items: result };
+  return { ok: false, status: 502, error: 'Miro item listing exceeded pagination limit', items: result };
+}
+
+export async function resumeCardUpload(env, issueKey) {
+  const pending = await env.MIRO_DELIVERY_STORAGE?.get('upload');
+  if (!pending) return { ok: true };
+  const read = await getItem(env, pending.itemId);
+  if (!read.ok) return { ok: false, stage: 'delivery-read-upload', miroStatus: read.status, error: read.error };
+  if (!read.found) {
+    // A successful upload can take time to become readable. Do not upload
+    // another card while its known ID is still awaiting confirmation.
+    const missingReads = (pending.missingReads || 0) + 1;
+    await env.MIRO_DELIVERY_STORAGE.put('upload', { ...pending, missingReads });
+    if (missingReads >= 3) {
+      const listed = await listItems(env, { type: 'image' });
+      if (!listed.ok) return { ok: false, stage: 'delivery-recheck-missing-upload', error: listed.error };
+      const recovered = listed.items.find(item => issueKeyFromImage(item) === issueKey);
+      if (recovered) {
+        await env.MIRO_DELIVERY_STORAGE.put('upload', { ...pending, itemId: String(recovered.id), missingReads: 0, positioned: false });
+      } else {
+        await env.MIRO_DELIVERY_STORAGE.delete('upload');
+        if (String(await env.CARD_MAP.get(customMapKey(issueKey))) === pending.itemId) await env.CARD_MAP.delete(customMapKey(issueKey));
+      }
+    }
+    return { ok: false, stage: 'delivery-upload-not-visible', itemId: pending.itemId };
+  }
+  if (issueKeyFromImage(read.item) !== issueKey) return { ok: false, stage: 'delivery-upload-identity', itemId: pending.itemId };
+  if (!pending.positioned) {
+    const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(pending.itemId)}`, {
+      method: 'PATCH', headers: { ...miroHeaders(env), 'Content-Type': 'application/json' }, body: JSON.stringify(pending.placement),
+    });
+    if (!response.ok) return { ok: false, stage: 'delivery-resume-position', miroStatus: response.status, error: await response.text() };
+    await env.MIRO_DELIVERY_STORAGE.put('upload', { ...pending, positioned: true });
+  }
+  await env.CARD_MAP.put(customMapKey(issueKey), pending.itemId);
+  return { ok: true, itemId: pending.itemId };
 }
 
 export async function resolveCanvasPosition(env, item, seen = new Set()) {

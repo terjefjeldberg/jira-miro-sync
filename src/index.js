@@ -2,7 +2,7 @@ import { assigneeColorKey, config, customMapKey, directPendingKey, freezeKey, is
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getCardSummaries, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
-import { issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings } from './miro.js';
+import { getItem, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, resumeCardUpload } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 
 function changedWebhookFields(body) {
@@ -422,6 +422,7 @@ async function jiraWebhook(request, env) {
   const body = parsed.body;
   const issueKey = normalizeIssueKey(body.issueKey ?? body.issue?.key);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
+  if (isIssueCreationWebhook(body)) return scheduleCardDelivery(env, { ...body, issueKey });
 
   // When the Queue binding exists, acknowledge Jira immediately and let the
   // consumer perform the potentially slow Jira/Miro work. Until then the
@@ -439,12 +440,112 @@ async function jiraWebhook(request, env) {
   return processJiraWebhookBody(body, env);
 }
 
+async function scheduleCardDelivery(env, body) {
+  if (!env.MIRO_CARD_DELIVERY) return json({ ok: false, reason: 'Durable card delivery is not configured' }, 503);
+  const id = env.MIRO_CARD_DELIVERY.idFromName(`${env.MIRO_BOARD_ID}:${body.issueKey}`);
+  return env.MIRO_CARD_DELIVERY.get(id).fetch(new Request('https://card-delivery/ensure', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
+// One persistent job per board/issue, independent of Queue retry/retention
+// limits. External I/O is serialized inside the object, not with a KV lock.
+export class MiroCardDelivery {
+  constructor(ctx, env) {
+    this.storage = ctx.storage;
+    this.env = { ...env, MIRO_DELIVERY_STORAGE: ctx.storage };
+    this.tail = Promise.resolve();
+  }
+
+  serial(action) {
+    const next = this.tail.then(action);
+    this.tail = next.catch(() => {});
+    return next;
+  }
+
+  async fetch(request) {
+    if (request.method === 'GET') {
+      return this.serial(async () => json({ pending: await this.storage.get('job') ?? null, confirmed: await this.storage.get('confirmed') ?? null }));
+    }
+    const body = await request.json();
+    if (!issueKeyIsValid(body.issueKey, this.env) || !isIssueCreationWebhook(body)) return json({ ok: false }, 400);
+    return this.serial(async () => {
+      await this.storage.transaction(async txn => {
+        if (!await txn.get('job')) await txn.put('job', { body, attempts: 0, acceptedAt: new Date().toISOString() });
+        if (!await txn.getAlarm()) await txn.setAlarm(Date.now() + 1000);
+      });
+      return json({ ok: true, accepted: true, confirmed: false, delivery: 'pending', issueKey: body.issueKey }, 202);
+    });
+  }
+
+  alarm() {
+    return this.serial(async () => {
+      const job = await this.storage.get('job');
+      if (!job) return;
+      job.attempts += 1;
+      const issueKey = job.body.issueKey;
+      const delaySeconds = Math.min(3600, 15 * 2 ** Math.min(job.attempts - 1, 8));
+      // Persist the next wakeup BEFORE any network request. Even a crash or
+      // a sufficiently long Miro outage cannot consume a finite retry budget.
+      await this.storage.transaction(async txn => {
+        await txn.put('job', job);
+        await txn.setAlarm(Date.now() + delaySeconds * 1000);
+      });
+      try {
+        const resumed = await resumeCardUpload(this.env, issueKey);
+        if (!resumed.ok) throw new Error(JSON.stringify(resumed));
+        const response = await processJiraWebhookBody(job.body, this.env);
+        const details = await response.json();
+        if (!response.ok || details.ok !== true) throw new Error(JSON.stringify(details));
+        const itemId = String(await this.env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
+        if (!itemId) throw new Error('Card mapping is missing; delivery is not confirmed');
+        const read = await getItem(this.env, itemId);
+        if (!read.ok) throw new Error(JSON.stringify(read));
+        if (!read.found || read.item?.type !== 'image' || issueKeyFromImage(read.item) !== issueKey) {
+          await this.env.CARD_MAP.delete(customMapKey(issueKey));
+          throw new Error('Mapped card is missing or belongs to another issue');
+        }
+        const item = read.item;
+        if (![item.position?.x, item.position?.y, item.geometry?.width, item.geometry?.height].every(Number.isFinite)
+          || item.geometry.width <= 0 || item.geometry.height <= 0) throw new Error('Miro card geometry is not confirmed');
+        const upload = await this.storage.get('upload');
+        if (upload?.placement?.parent?.id && (String(item.parent?.id) !== String(upload.placement.parent.id)
+          || Math.abs(item.position.x - upload.placement.position.x) > 1
+          || Math.abs(item.position.y - upload.placement.position.y) > 1)) {
+          await this.storage.put('upload', { ...upload, positioned: false });
+          throw new Error('Miro has not confirmed placement in Incoming');
+        }
+        const confirmed = { issueKey, itemId, boardId: this.env.MIRO_BOARD_ID, attempts: job.attempts, confirmedAt: new Date().toISOString() };
+        await this.storage.transaction(async txn => {
+          await txn.put('confirmed', confirmed);
+          await txn.delete('job');
+          await txn.delete('upload');
+          await txn.delete('uploadStartedAt');
+          await txn.deleteAlarm();
+        });
+        console.log('Miro card delivery confirmed', confirmed);
+      } catch (error) {
+        job.lastError = String(error?.message ?? error);
+        job.nextAttemptAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
+        await this.storage.transaction(async txn => {
+          await txn.put('job', job);
+          await txn.setAlarm(Date.now() + delaySeconds * 1000);
+        });
+        console.error('Miro card delivery pending; retry scheduled', { issueKey, attempts: job.attempts, delaySeconds, error: job.lastError });
+      }
+    });
+  }
+}
+
 export default {
   async queue(batch, env) {
     for (const message of batch.messages) {
       let response;
       try {
-        response = await processJiraWebhookBody(message.body ?? {}, env);
+        const body = message.body ?? {};
+        response = isIssueCreationWebhook(body)
+          ? await scheduleCardDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
+          : await processJiraWebhookBody(body, env);
       } catch (error) {
         console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error', message: error?.message ?? String(error), stack: error?.stack ?? '' });
         throw error;

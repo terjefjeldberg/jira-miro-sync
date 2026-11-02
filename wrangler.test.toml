@@ -4,6 +4,14 @@ compatibility_date = "2026-09-01"
 keep_vars = true
 preview_urls = false
 
+[[durable_objects.bindings]]
+name = "MIRO_CARD_DELIVERY"
+class_name = "MiroCardDelivery"
+
+[[migrations]]
+tag = "v1-card-delivery"
+new_sqlite_classes = ["MiroCardDelivery"]
+
 [vars]
 JIRA_CLOUD_ID = "9e93c25f-4279-40a5-8076-732017184ac4"
 MIRO_BOARD_ID = "uXjVP6-u9TE="
