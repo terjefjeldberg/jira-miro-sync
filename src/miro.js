@@ -5,8 +5,8 @@ const itemsBase = env => `https://api.miro.com/v2/boards/${encodeURIComponent(en
 const incomingFrameCache = new Map();
 const INCOMING_FRAME_CACHE_TTL_MS = 30_000;
 
-export async function getItem(env, itemId) {
-  const response = await fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env) });
+export async function getItem(env, itemId, { signal } = {}) {
+  const response = await fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal });
   if (response.status === 404) return { ok: true, found: false };
   if (!response.ok) return { ok: false, found: true, status: response.status, error: await response.text() };
   return { ok: true, found: true, item: await response.json() };

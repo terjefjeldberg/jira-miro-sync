@@ -145,6 +145,7 @@ function token(secret) {
   const oldFetch = globalThis.fetch;
   globalThis.fetch = async url => {
     if (String(url).includes('/issue/SN-5?fields=')) return json({ fields: { summary: 'x', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'Todo' }, customfield_11208: null } });
+    if (String(url).includes('/issue/SN-5/changelog?')) return json({ total: 0, values: [] });
     throw new Error(`Unexpected fetch ${url}`);
   };
   const response = await worker.fetch(new Request('https://worker.test/', {
@@ -191,6 +192,7 @@ function token(secret) {
     if (value.includes('/issue/SN-4/comment?')) {
       return json({ comments: [], total: 0, maxResults: 100, startAt: 0 });
     }
+    if (value.includes('/issue/SN-4/changelog?')) return json({ total: 0, values: [] });
     if (value.includes('/issue/SN-4?fields=')) {
       return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11208: '2026-09-07' } });
     }

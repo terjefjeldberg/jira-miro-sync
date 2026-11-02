@@ -116,6 +116,30 @@ For production migration, create a separate Worker/KV namespace and set these va
 
 ## Debugging
 
+### Status and movement audit
+
+Cloudflare Logs messages `Jira status change` and `Miro card movement` include
+the issue key, source, positions/statuses, outcome and attribution evidence.
+The same records are retained for 90 days in CARD_MAP under
+`audit:jira:<issue>:<changelog-id>` and `audit:miro:<issue>:<event-id>:<record-id>`.
+Jira account ID and display name come from Jira's own recent changelog, not the
+webhook caller or rule actor. Recent status history is caught up and deduplicated
+on incoming status webhooks; lookup failures are logged without blocking sync.
+Miro records contain the signed JWT `user` as `requesterMiroUserId` (`sub` is the
+app client ID). This observer is never assumed to be the mover. Attribution uses
+Miro REST modifiedBy only when it matches the SDK movement metadata's time and
+canvas position. `actorMiroUserId` / `actorName` then describe Miro's verified
+last modifier at that position, not proof of a physical drag gesture. When an
+API error, concurrent edit, or legacy client prevents verification, attribution
+is explicitly unknown; `observedMiroUserId` remains unverified evidence only.
+Several viewers can observe one move: matching eventId groups their records.
+Moves outside workflow columns are recorded via `/card-movement` too. Pure
+metadata updates and sub-pixel changes do not create movement records.
+
+Collaborators must reload the Miro board to load app client v26. Already-open
+legacy clients keep syncing but cannot supply historical mover evidence. No
+past human identity can be reconstructed from the former generic HTTP logs.
+
 Start from the endpoint in `src/index.js`. Responses include `stage`, Jira/Miro HTTP status and error text for external failures. Keep errors structured this way when adding functionality.
 
 Useful checks after a change:

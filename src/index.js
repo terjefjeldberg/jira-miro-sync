@@ -4,6 +4,7 @@ import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSti
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
 import { getItem, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, resumeCardUpload } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
+import { auditJiraStatusChanges, hasMovement, logMovementAudit, prepareMovementAudit } from './movement-audit.js';
 
 function changedWebhookFields(body) {
   const items = Array.isArray(body?.changelog?.items) ? body.changelog.items : [];
@@ -150,7 +151,8 @@ async function setAssigneeColor(request, env) {
 }
 
 async function miroToJira(request, env) {
-  const auth = await requireMiroJson(request, env); if (auth) return auth;
+  const identity = await requireMiro(request, env);
+  if (!identity) return json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const body = parsed.body;
   const boardId = String(body.boardId ?? '').trim();
@@ -165,12 +167,35 @@ async function miroToJira(request, env) {
   if (!mappedItemId) await env.CARD_MAP.put(customMapKey(issueKey), itemId);
 
   const live = await getCardData(env, issueKey).catch(() => null);
+  const audit = await prepareMovementAudit(env, { ...body, issueKey, itemId }, identity);
   if (live?.ok && String(live.status ?? '').trim().toLowerCase() === desiredStatus.toLowerCase()) {
+    await logMovementAudit(env, audit, { fromStatus: live.status, toStatus: live.status, requestedStatus: desiredStatus, outcome: 'no-status-change' });
     return json({ ok: true, changed: false, issueKey, itemId, currentStatus: live.status, desiredStatus, reason: 'Jira already has desired status' });
   }
 
-  const result = await transitionIssue(env, issueKey, desiredStatus);
+  let result;
+  try { result = await transitionIssue(env, issueKey, desiredStatus); }
+  catch (error) {
+    await logMovementAudit(env, audit, { fromStatus: live?.status ?? null, requestedStatus: desiredStatus, outcome: 'transition-error' });
+    throw error;
+  }
+  await logMovementAudit(env, audit, { fromStatus: result.fromStatus ?? live?.status ?? null, toStatus: result.ok ? result.toStatus ?? desiredStatus : live?.status ?? null, requestedStatus: desiredStatus, outcome: result.ok ? result.changed ? 'status-changed' : 'no-status-change' : 'transition-rejected' });
   return json({ ...result, issueKey, itemId }, result.ok ? 200 : (result.status || 500));
+}
+
+async function cardMovement(request, env) {
+  const identity = await requireMiro(request, env);
+  if (!identity) return json({ ok: false, reason: 'Invalid Miro identity token' }, 401);
+  const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
+  const body = parsed.body;
+  const issueKey = normalizeIssueKey(body.issueKey), itemId = String(body.itemId ?? '').trim();
+  if (String(body.boardId) !== String(env.MIRO_BOARD_ID)) return json({ ok: false, reason: 'Wrong Miro board' }, 403);
+  if (!issueKeyIsValid(issueKey, env) || !itemId || !hasMovement(body.movement)) return json({ ok: false, reason: 'Invalid movement' }, 400);
+  const mapped = await env.CARD_MAP.get(customMapKey(issueKey));
+  if (mapped && String(mapped) !== itemId) return json({ ok: false, reason: 'Different card is mapped' }, 409);
+  const audit = await prepareMovementAudit(env, { ...body, issueKey, itemId }, identity);
+  await logMovementAudit(env, audit, { outcome: 'position-changed' });
+  return json({ ok: true, eventId: audit.eventId, attribution: audit.attribution });
 }
 
 async function rollbackCustomCard(request, env) {
@@ -333,6 +358,10 @@ async function processJiraWebhookBody(body, env) {
   let status = String(body.status ?? '').trim();
   let live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && live.status) status = live.status;
+  if (!issueCreated && (body.status || changedWebhookFields(body).includes('status')) && !String(body.webhookEvent ?? '').includes('comment')) {
+    try { await auditJiraStatusChanges(env, issueKey); }
+    catch (error) { console.error('Jira status audit lookup failed', { issueKey, error: String(error) }); }
+  }
 
   const frozen = await env.CARD_MAP.get(freezeKey(issueKey), 'json').catch(() => null);
   if (frozen?.desiredStatus && String(frozen.desiredStatus).trim().toLowerCase() === status.toLowerCase()) {
@@ -585,6 +614,7 @@ export default {
     if (method === 'POST' && path === '/assignee-color-legend') return assigneeColorLegend(request, env);
     if (method === 'POST' && path === '/set-assignee-color') return setAssigneeColor(request, env);
     if (method === 'POST' && path === '/custom-miro-to-jira') return miroToJira(request, env);
+    if (method === 'POST' && path === '/card-movement') return cardMovement(request, env);
     if (method === 'POST' && path === '/rollback-custom-card') return rollbackCustomCard(request, env);
     if (method === 'POST' && path === '/sticky-to-jira') return stickyToJira(request, env);
     if (method === 'POST' && path === '/conversion-direct-card') return directCard(request, env, ctx);

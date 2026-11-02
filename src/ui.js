@@ -8,7 +8,7 @@ export { renderCommentsClient } from './comments-client.js';
 const sdk = '<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>';
 
 export function renderApp() {
-  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=25"></script></body></html>`, 'text/html; charset=utf-8');
+  return text(`<!doctype html><html><head><meta charset="utf-8"><title>Jira to Miro position sync</title>${sdk}</head><body><script src="/app.js?v=26"></script></body></html>`, 'text/html; charset=utf-8');
 }
 
 export function renderPanel() {
