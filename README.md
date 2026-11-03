@@ -98,7 +98,7 @@ Production currently uses project key `ROV`, Worker `jira-to-miro-prod` and queu
 
 Card delivery has no application retry count or expiry. Failed jobs retain their
 payload and last error and reschedule themselves after 15, 30, 60 seconds, then
-increasing delays up to one hour. The next alarm is saved before external I/O.
+increasing delays up to one minute. The next alarm is saved before external I/O.
 Credentials/permissions and full Incoming errors also remain pending until fixed.
 Known upload IDs survive placement failures and are repaired instead of deleted
 and uploaded again. Unknown upload outcomes get a visibility grace period and a
@@ -117,6 +117,15 @@ For production migration, create a separate Worker/KV namespace and set these va
 ## Debugging
 
 ### Safe workflow positioning
+
+Image creation/resumption updates image title/size through `/images/{id}`, then
+sets parent and explicit coordinate reference through `/items/{id}`. The image
+update endpoint rejects `position.relativeTo`; never send placement through it.
+Validate destination bounds before placement and verify parent, local reference,
+coordinates and the whole card's frame containment before confirming delivery.
+Internal maintenance events `inspect_delivery` and `retry_delivery` read or wake
+the existing creation job without re-uploading its saved image; the inspection
+is stored at `delivery-inspection:<issue>`.
 
 Status/field webhooks are durably stored in a per-board/issue status job using
 the existing `MiroCardDelivery` binding, separate from card creation. The Queue

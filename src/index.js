@@ -355,6 +355,14 @@ async function processJiraWebhookBody(body, env, ctx) {
   const issueKey = normalizeIssueKey(body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
   if (body.event === 'inspect_position') return json(await inspectMappedPosition(env, issueKey));
+  if (body.event === 'inspect_delivery' || body.event === 'retry_delivery') {
+    const id = env.MIRO_CARD_DELIVERY.idFromName(`${env.MIRO_BOARD_ID}:${issueKey}`);
+    const stub = env.MIRO_CARD_DELIVERY.get(id);
+    const response = await stub.fetch(new Request(`https://card-delivery/${body.event === 'retry_delivery' ? 'retry' : 'state'}`, { method: body.event === 'retry_delivery' ? 'POST' : 'GET' }));
+    const state = await response.json();
+    await env.CARD_MAP.put(`delivery-inspection:${issueKey}`, JSON.stringify(state));
+    return json(state);
+  }
   if (body.event === 'repair_position') {
     const live = await getCardData(env, issueKey);
     if (!live.ok || String(live.status).toLowerCase() !== String(body.expectedStatus).toLowerCase()) return json({ ok: false, stage: 'repair-jira-status-changed' }, 409);
@@ -512,8 +520,13 @@ export class MiroCardDelivery {
 
   async fetch(request) {
     if (request.method === 'GET') {
-      return this.serial(async () => json({ pending: await this.storage.get('job') ?? null, confirmed: await this.storage.get('confirmed') ?? null }));
+      return this.serial(async () => json({ pending: await this.storage.get('job') ?? null, confirmed: await this.storage.get('confirmed') ?? null, upload: await this.storage.get('upload') ?? null }));
     }
+    if (new URL(request.url).pathname === '/retry') return this.serial(async () => {
+      if (!await this.storage.get('job')) return json({ ok: false, reason: 'No pending delivery' }, 409);
+      await this.storage.setAlarm(Date.now() + 1000);
+      return json({ ok: true, retryScheduled: true });
+    });
     const body = await request.json();
     const statusJob = new URL(request.url).pathname === '/ensure-status';
     if (!issueKeyIsValid(body.issueKey, this.env) || (!statusJob && !isIssueCreationWebhook(body))) return json({ ok: false }, 400);
@@ -539,7 +552,7 @@ export class MiroCardDelivery {
       if (!job) return;
       job.attempts += 1;
       const issueKey = job.body.issueKey;
-      const delaySeconds = job.mode === 'status' ? Math.min(60, 5 * 2 ** Math.min(job.attempts - 1, 4)) : Math.min(3600, 15 * 2 ** Math.min(job.attempts - 1, 8));
+      const delaySeconds = Math.min(60, (job.mode === 'status' ? 5 : 15) * 2 ** Math.min(job.attempts - 1, 4));
       // Persist the next wakeup BEFORE any network request. Even a crash or
       // a sufficiently long Miro outage cannot consume a finite retry budget.
       await this.storage.transaction(async txn => {
@@ -587,10 +600,19 @@ export class MiroCardDelivery {
           || item.geometry.width <= 0 || item.geometry.height <= 0) throw new Error('Miro card geometry is not confirmed');
         const upload = await this.storage.get('upload');
         if (upload?.placement?.parent?.id && (String(item.parent?.id) !== String(upload.placement.parent.id)
+          || item.position.relativeTo !== 'parent_top_left'
           || Math.abs(item.position.x - upload.placement.position.x) > 1
           || Math.abs(item.position.y - upload.placement.position.y) > 1)) {
           await this.storage.put('upload', { ...upload, positioned: false });
           throw new Error('Miro has not confirmed placement in Incoming');
+        }
+        if (upload?.placement?.parent?.id) {
+          const frame = await getItem(this.env, upload.placement.parent.id, { type: 'frame' });
+          if (!frame.ok || !frame.found) throw new Error('Cannot confirm placement frame bounds');
+          const { width, height } = frame.item.geometry ?? {};
+          if (![width, height].every(Number.isFinite) || item.position.x - item.geometry.width / 2 < 0
+            || item.position.y - item.geometry.height / 2 < 0 || item.position.x + item.geometry.width / 2 > width
+            || item.position.y + item.geometry.height / 2 > height) throw new Error('Card is not fully inside placement frame');
         }
         const confirmed = { issueKey, itemId, boardId: this.env.MIRO_BOARD_ID, attempts: job.attempts, confirmedAt: new Date().toISOString() };
         await this.storage.transaction(async txn => {
@@ -621,7 +643,7 @@ export default {
       let response;
       try {
         const body = message.body ?? {};
-        const diagnostic = ['inspect_position', 'repair_position'].includes(body.event);
+        const diagnostic = ['inspect_position', 'repair_position', 'inspect_delivery', 'retry_delivery'].includes(body.event);
         response = isIssueCreationWebhook(body)
           ? await scheduleCardDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
           : env.MIRO_CARD_DELIVERY && !diagnostic

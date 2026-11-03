@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import worker, { MiroCardDelivery } from '../src/index.js';
 import { customMapKey } from '../src/config.js';
-import { resumeCardUpload, uploadSvg, listItems } from '../src/miro.js';
+import { getItem, resumeCardUpload, uploadSvg, listItems } from '../src/miro.js';
 
 class Storage {
   values = new Map();
@@ -79,6 +79,7 @@ try {
   let uploads = 0, deletes = 0, patchFailures = 1;
   const placement = { position: { x: 100, y: 100 }, parent: { id: 'incoming' } };
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith('/frames/incoming')) return json({ geometry: { width: 1200, height: 1200 } });
     if (init.method === 'DELETE') { deletes++; return json({}); }
     if (init.method === 'POST') { uploads++; return json({ id: 'image-1' }); }
     if (init.method === 'PATCH') return json({}, patchFailures-- > 0 ? 500 : 200);
@@ -118,10 +119,21 @@ try {
       return json({ id: freshItem.id });
     }
     if (value.endsWith('/images/image-1') && init.method === 'PATCH') {
-      if (freshPatches++ === 0) return json({ message: 'Internal error occurred' }, 500);
       const patch = JSON.parse(init.body);
+      // Reproduce the real API's 400: image updates do not accept relativeTo.
+      assert.equal(patch.position, undefined);
+      assert.equal(patch.parent, undefined);
+      if (freshPatches++ === 0) return json({ message: 'Internal error occurred' }, 500);
       freshItem = { ...freshItem, ...patch, type: 'image', geometry: { ...freshItem.geometry, ...patch.geometry } };
       return json(freshItem);
+    }
+    if (value.endsWith('/items/image-1') && init.method === 'PATCH') {
+      const patch = JSON.parse(init.body);
+      assert.equal(patch.position.relativeTo, 'parent_top_left');
+      assert.equal(patch.parent.id, 'incoming');
+      assert.equal(patch.geometry, undefined);
+      assert.equal(patch.data, undefined);
+      freshItem = { ...freshItem, ...patch }; return json(freshItem);
     }
     if (value.endsWith('/images/image-1')) return json(freshItem);
     throw new Error(`Unexpected fresh delivery request ${value}`);
@@ -136,6 +148,21 @@ try {
   assert.equal((await freshStorage.get('confirmed')).itemId, 'image-1');
   assert.equal(freshUploads, 1);
   assert.equal(freshItem.parent.id, 'incoming');
+  assert.equal(freshItem.position.relativeTo, 'parent_top_left');
+
+  // Matching numeric coordinates with a canvas reference are not proof of
+  // Incoming placement, even when the parent ID happens to match.
+  const verifiedPosition = structuredClone(freshItem.position);
+  await freshStorage.put('upload', { itemId: 'image-1', positioned: true, placement: { parent: { id: 'incoming' }, position: verifiedPosition } });
+  freshItem.position.relativeTo = 'canvas_center';
+  await fresh.fetch(ensure()); await fresh.alarm();
+  assert.ok(await freshStorage.get('job'));
+  assert.equal((await freshStorage.get('upload')).positioned, false);
+  freshItem.position = verifiedPosition;
+  // An out-of-frame saved destination must not be written on retry.
+  await freshStorage.put('upload', { itemId: 'image-1', positioned: false, placement: { parent: { id: 'incoming' }, position: { x: 5000, y: 100, relativeTo: 'parent_top_left' } } });
+  assert.equal((await resumeCardUpload(fresh.env, 'SN-1')).ok, false);
+  assert.deepEqual(freshItem.position, verifiedPosition);
 
   // Miro acknowledging a PATCH is insufficient if read-back disagrees.
   await freshStorage.put('upload', { itemId: 'image-1', positioned: true, placement: { parent: { id: 'incoming' }, position: { x: 999, y: 999 } } });
@@ -211,6 +238,15 @@ try {
   globalThis.fetch = async () => json({}, 503);
   await statusDelivery.fetch(requestStatus()); await statusDelivery.alarm();
   assert.ok(await statusStorage.get('job'));
+  // Typed Miro endpoints can fail independently; generic GET is read-only
+  // and supplies the same identity/position evidence for verification.
+  const fallbackReads = [];
+  globalThis.fetch = async url => {
+    fallbackReads.push(String(url));
+    return String(url).includes('/items/') ? json(statusItem) : json({ error: 'Internal error occurred' }, 500);
+  };
+  assert.equal((await getItem(statusEnv, 'image-1', { type: 'image' })).item.id, 'image-1');
+  assert.equal(fallbackReads.length, 2);
 } finally {
   globalThis.fetch = originalFetch;
   console.log = originalLog;

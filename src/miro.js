@@ -8,7 +8,11 @@ const INCOMING_FRAME_CACHE_TTL_MS = 30_000;
 export async function getItem(env, itemId, { signal, type } = {}) {
   const base = type === 'image' || type === 'frame'
     ? `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/${type}s` : itemsBase(env);
-  const response = await fetch(`${base}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal: signal ?? AbortSignal.timeout(30000) });
+  let response = await fetch(`${base}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal: signal ?? AbortSignal.timeout(30000) });
+  if ((type === 'frame' || type === 'image') && response.status >= 500 && !signal?.aborted) {
+    await response.body?.cancel();
+    response = await fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal: signal ?? AbortSignal.timeout(30000) });
+  }
   if (response.status === 404) return { ok: true, found: false };
   if (!response.ok) return { ok: false, found: true, status: response.status, error: await response.text() };
   return { ok: true, found: true, item: await response.json() };
@@ -22,12 +26,35 @@ export async function patchItem(env, itemId, body) {
     method: 'PATCH',
     headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
   });
 }
 
 export async function deleteImage(env, itemId) {
   const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`, { method: 'DELETE', headers: miroHeaders(env) });
   return response.ok || response.status === 404;
+}
+
+// Image-specific updates reject position.relativeTo. Resize/title updates and
+// explicit parent-relative placement must use their respective API endpoints.
+async function placeUploadedImage(env, itemId, placement) {
+  if (placement.parent?.id) {
+    const frame = await getItem(env, placement.parent.id, { type: 'frame' });
+    if (!frame.ok || !frame.found) return { ok: false, status: frame.status || 502, text: async () => 'Placement frame is unavailable' };
+    const width = Number(placement.geometry?.width ?? config(env).card.width), height = config(env).card.height;
+    const { x, y } = placement.position;
+    if (![x, y, width, height, frame.item.geometry?.width, frame.item.geometry?.height].every(Number.isFinite)
+      || x - width / 2 < 0 || y - height / 2 < 0
+      || x + width / 2 > frame.item.geometry.width || y + height / 2 > frame.item.geometry.height) {
+      return { ok: false, status: 409, text: async () => 'Refusing placement outside target frame' };
+    }
+  }
+  const metadata = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH', headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: placement.data, geometry: placement.geometry }), signal: AbortSignal.timeout(30000),
+  });
+  if (!metadata.ok) return metadata;
+  return patchItem(env, itemId, { ...(placement.parent ? { parent: placement.parent } : {}), position: placement.position });
 }
 
 export async function uploadSvg(env, issueKey, svg, patch, title = `CUSTOM_JIRA_CARD:${issueKey}`, width = config(env).card.width) {
@@ -47,11 +74,7 @@ export async function uploadSvg(env, issueKey, svg, patch, title = `CUSTOM_JIRA_
     await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId, placement, positioned: false });
     await env.MIRO_DELIVERY_STORAGE.delete('uploadStartedAt');
   }
-  const positioned = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(itemId)}`, {
-    method: 'PATCH',
-    headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
-    body: JSON.stringify(placement),
-  });
+  const positioned = await placeUploadedImage(env, itemId, placement);
   if (!positioned.ok) {
     const error = await positioned.text();
     if (!env.MIRO_DELIVERY_STORAGE) await deleteImage(env, itemId).catch(() => {});
@@ -124,9 +147,7 @@ export async function resumeCardUpload(env, issueKey) {
   if (issueKeyFromImage(read.item) !== issueKey) return { ok: false, stage: 'delivery-upload-identity', itemId: pending.itemId };
   if (!pending.positioned) {
     pending.placement.position.relativeTo ??= pending.placement.parent?.id ? 'parent_top_left' : 'canvas_center';
-    const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(pending.itemId)}`, {
-      method: 'PATCH', headers: { ...miroHeaders(env), 'Content-Type': 'application/json' }, body: JSON.stringify(pending.placement),
-    });
+    const response = await placeUploadedImage(env, pending.itemId, pending.placement);
     if (!response.ok) return { ok: false, stage: 'delivery-resume-position', miroStatus: response.status, error: await response.text() };
     await env.MIRO_DELIVERY_STORAGE.put('upload', { ...pending, positioned: true });
   }
