@@ -78,7 +78,7 @@ try {
   let transitioned = false;
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
-    if (value.endsWith('/items/image')) return json(item);
+    if (value.endsWith('/images/image')) return json(item);
     if (value.endsWith('/transitions') && init.method === 'POST') { transitioned = true; return new Response(null, { status: 204 }); }
     if (value.endsWith('/transitions')) return json({ transitions: [{ id: '20', name: 'Move to Code review', to: { name: 'Code review' } }] });
     if (value.includes('/issue/SN-1?')) return json({ fields: { summary: 'Test', status: { name: 'Approved' }, issuetype: { name: 'Bug' } } });

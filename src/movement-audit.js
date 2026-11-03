@@ -35,7 +35,7 @@ export async function prepareMovementAudit(env, body, identity) {
   record.miroModifiedAt = String(movement.modifiedAt ?? '');
   record.attributionReason = 'miro-metadata-unavailable';
   try {
-    const read = await getItem(env, body.itemId, { signal: AbortSignal.timeout(5000) });
+    const read = await getItem(env, body.itemId, { type: 'image', signal: AbortSignal.timeout(5000) });
     if (!read.ok || !read.found || issueKeyFromImage(read.item) !== body.issueKey) return record;
     const item = read.item;
     const id = String(item.modifiedBy?.id ?? (typeof item.modifiedBy === 'string' ? item.modifiedBy : '')).trim();

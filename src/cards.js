@@ -164,7 +164,7 @@ export async function createCard(env, issueKey, position, parentId = null) {
     if (!listed.ok) return { ok: false, status: 502, stage: 'delivery-recover-card', error: listed.error };
     const recovered = listed.items.find(item => issueKeyFromImage(item) === issueKey);
     if (recovered) {
-      const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width }, position: { x: Number(position.x), y: Number(position.y), origin: 'center' } };
+      const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width: config(env).card.width }, position: { x: Number(position.x), y: Number(position.y), origin: 'center', relativeTo: parentId ? 'parent_top_left' : 'canvas_center' } };
       if (parentId) placement.parent = { id: parentId };
       await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId: String(recovered.id), placement, positioned: false });
       return { ok: false, status: 502, stage: 'delivery-recovered-upload', itemId: String(recovered.id) };
@@ -172,7 +172,7 @@ export async function createCard(env, issueKey, position, parentId = null) {
   }
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, status: 502, stage: 'read-jira-data', jiraStatus: data.status, error: data.error };
-  const patch = { position: { x: Number(position.x), y: Number(position.y), origin: 'center' } };
+  const patch = { position: { x: Number(position.x), y: Number(position.y), origin: 'center', relativeTo: parentId ? 'parent_top_left' : 'canvas_center' } };
   if (parentId) patch.parent = { id: parentId };
   const created = await uploadSvg(env, issueKey, cardSvg(data), patch);
   if (!created.ok) return created;
@@ -186,7 +186,7 @@ export async function createDirectCard(env, issueKey, x, y) {
   const result = await createCard(env, issueKey, { x, y });
   if (!result.ok || result.created) return result;
 
-  const read = await getItem(env, result.itemId);
+  const read = await getItem(env, result.itemId, { type: 'image' });
   if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
   if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
     await env.CARD_MAP.delete(customMapKey(issueKey));
@@ -194,7 +194,7 @@ export async function createDirectCard(env, issueKey, x, y) {
   }
   const moved = await patchItem(env, result.itemId, {
     parent: { id: null },
-    position: { x, y, origin: 'center' },
+    position: { x, y, origin: 'center', relativeTo: 'canvas_center' },
   });
   if (!moved.ok) return { ok: false, status: 502, stage: 'direct-reposition-existing-card', miroStatus: moved.status, error: await moved.text() };
   return { ...result, directPositionEnsured: true };
@@ -281,7 +281,7 @@ export async function refreshCard(env, issueKey, existingData = null, selectedIt
   const itemId = String(selectedItemId || (await env.CARD_MAP.get(customMapKey(issueKey)) ?? '')).trim();
   if (!itemId) return { ok: true, refreshed: false, mapped: false };
 
-  const read = await getItem(env, itemId);
+  const read = await getItem(env, itemId, { type: 'image' });
   if (!read.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-miro', miroStatus: read.status, error: read.error };
   if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
     await env.CARD_MAP.delete(customMapKey(issueKey));

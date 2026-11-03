@@ -37,7 +37,7 @@ try {
   let readFailures = 8, imageReads = 0;
   globalThis.fetch = async url => {
     if (String(url).includes('/issue/SN-1?')) return json({ fields: { summary: 'Card', status: { name: '0. Backlog' }, issuetype: { name: 'Bug' } } });
-    if (String(url).endsWith('/items/image-1')) {
+    if (String(url).endsWith('/images/image-1')) {
       imageReads++;
       return readFailures-- > 0 ? json({ message: 'Internal error occurred' }, 500) : json(item);
     }
@@ -123,7 +123,7 @@ try {
       freshItem = { ...freshItem, ...patch, type: 'image', geometry: { ...freshItem.geometry, ...patch.geometry } };
       return json(freshItem);
     }
-    if (value.endsWith('/items/image-1')) return json(freshItem);
+    if (value.endsWith('/images/image-1')) return json(freshItem);
     throw new Error(`Unexpected fresh delivery request ${value}`);
   };
   let fresh = new MiroCardDelivery({ storage: freshStorage }, freshEnv);

@@ -5,14 +5,19 @@ const itemsBase = env => `https://api.miro.com/v2/boards/${encodeURIComponent(en
 const incomingFrameCache = new Map();
 const INCOMING_FRAME_CACHE_TTL_MS = 30_000;
 
-export async function getItem(env, itemId, { signal } = {}) {
-  const response = await fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal });
+export async function getItem(env, itemId, { signal, type } = {}) {
+  const base = type === 'image' || type === 'frame'
+    ? `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/${type}s` : itemsBase(env);
+  const response = await fetch(`${base}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal });
   if (response.status === 404) return { ok: true, found: false };
   if (!response.ok) return { ok: false, found: true, status: response.status, error: await response.text() };
   return { ok: true, found: true, item: await response.json() };
 }
 
 export async function patchItem(env, itemId, body) {
+  if (body.position && !['canvas_center', 'parent_top_left'].includes(body.position.relativeTo)) {
+    throw new Error('Refusing Miro position write without an explicit coordinate reference');
+  }
   return fetch(`${itemsBase(env)}/${encodeURIComponent(itemId)}`, {
     method: 'PATCH',
     headers: { ...miroHeaders(env), 'Content-Type': 'application/json' },
@@ -34,7 +39,8 @@ export async function uploadSvg(env, issueKey, svg, patch, title = `CUSTOM_JIRA_
   if (!upload.ok) return { ok: false, status: 502, stage: 'miro-image-upload', miroStatus: upload.status, error: await upload.text() };
   const itemId = String((await upload.json())?.id ?? '').trim();
   if (!itemId) return { ok: false, status: 502, stage: 'miro-image-id', reason: 'Miro returned no image ID' };
-  const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width }, ...patch };
+  const placement = { data: { title: `CUSTOM_JIRA_CARD:${issueKey}` }, geometry: { width }, ...patch,
+    position: { ...patch.position, relativeTo: patch.parent?.id ? 'parent_top_left' : 'canvas_center' } };
   // Keep the upload ID before placement: a Miro 5xx must not make the next
   // attempt upload another image or delete an image that may already exist.
   if (env.MIRO_DELIVERY_STORAGE) {
@@ -74,7 +80,7 @@ export async function replaceSvg(env, itemId, issueKey, svg, title = `CUSTOM_JIR
     ? { ok: true, refreshed: true, resized: true }
     : { ok: false, refreshed: false, stage: 'resize-custom-card', miroStatus: resized.status, error: await resized.text() };
 }
-export async function listItems(env, params = {}) {
+export async function listItems(env, params = {}, { signal } = {}) {
   const result = [];
   let cursor = '';
   for (let page = 0; page < 20; page += 1) {
@@ -82,7 +88,7 @@ export async function listItems(env, params = {}) {
     url.searchParams.set('limit', '50');
     for (const [key, value] of Object.entries(params)) if (value != null && value !== '') url.searchParams.set(key, String(value));
     if (cursor) url.searchParams.set('cursor', cursor);
-    const response = await fetch(url, { headers: miroHeaders(env) });
+    const response = await fetch(url, { headers: miroHeaders(env), signal });
     if (!response.ok) return { ok: false, status: response.status, error: await response.text(), items: result };
     const body = await response.json();
     result.push(...(Array.isArray(body?.data) ? body.data : []));
@@ -95,7 +101,7 @@ export async function listItems(env, params = {}) {
 export async function resumeCardUpload(env, issueKey) {
   const pending = await env.MIRO_DELIVERY_STORAGE?.get('upload');
   if (!pending) return { ok: true };
-  const read = await getItem(env, pending.itemId);
+  const read = await getItem(env, pending.itemId, { type: 'image' });
   if (!read.ok) return { ok: false, stage: 'delivery-read-upload', miroStatus: read.status, error: read.error };
   if (!read.found) {
     // A successful upload can take time to become readable. Do not upload
@@ -117,6 +123,7 @@ export async function resumeCardUpload(env, issueKey) {
   }
   if (issueKeyFromImage(read.item) !== issueKey) return { ok: false, stage: 'delivery-upload-identity', itemId: pending.itemId };
   if (!pending.positioned) {
+    pending.placement.position.relativeTo ??= pending.placement.parent?.id ? 'parent_top_left' : 'canvas_center';
     const response = await fetch(`https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/images/${encodeURIComponent(pending.itemId)}`, {
       method: 'PATCH', headers: { ...miroHeaders(env), 'Content-Type': 'application/json' }, body: JSON.stringify(pending.placement),
     });
@@ -134,10 +141,11 @@ export async function resolveCanvasPosition(env, item, seen = new Set()) {
   const x = Number(item?.position?.x ?? item?.x);
   const y = Number(item?.position?.y ?? item?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const relativeTo = String(item?.position?.relativeTo ?? item?.relativeTo ?? 'canvas_center');
   const parentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
+  const relativeTo = String(item?.position?.relativeTo ?? item?.relativeTo ?? (parentId ? '' : 'canvas_center'));
+  if (!relativeTo) return null;
   if (!parentId || relativeTo === 'canvas_center') return { x, y };
-  const parentRead = await getItem(env, parentId);
+  const parentRead = await getItem(env, parentId, { type: 'frame', signal: AbortSignal.timeout(5000) });
   if (!parentRead.ok || !parentRead.found) return null;
   const parent = parentRead.item;
   const parentCanvas = await resolveCanvasPosition(env, parent, seen);
@@ -161,146 +169,156 @@ function overlap(centerX, width, column) {
   return Math.max(0, Math.min(right, column.right) - Math.max(left, column.left)) / width;
 }
 
-const COLLISION_OVERLAP_LIMIT = 0.95;
-const COLLISION_STEP = 12;
-const COLLISION_DIRECTIONS = [
-  { x: 1, y: 0 },
-  { x: -1, y: 0 },
-];
-const workflowParentCache = new Map();
-const WORKFLOW_PARENT_CACHE_TTL_MS = 60_000;
+// All workflow writes use ONE explicit reference: the pinned frame's top left.
+// Read coordinates are never sent back to Miro with an implicit reference.
+const itemParent = item => String(item?.parent?.id ?? item?.parentId ?? '').trim();
+const itemReference = item => String(item?.position?.relativeTo ?? item?.relativeTo ?? (itemParent(item) ? '' : 'canvas_center'));
+const samePosition = (a, b) => itemParent(a) === itemParent(b) && itemReference(a) === itemReference(b)
+  && Math.abs(Number(a?.position?.x) - Number(b?.position?.x)) <= 1
+  && Math.abs(Number(a?.position?.y) - Number(b?.position?.y)) <= 1;
+const failedFrameReads = new Map();
 
-function cardOverlapRatio(a, b) {
-  const aLeft = a.x - a.width / 2, aRight = a.x + a.width / 2;
-  const aTop = a.y - a.height / 2, aBottom = a.y + a.height / 2;
-  const bLeft = b.x - b.width / 2, bRight = b.x + b.width / 2;
-  const bTop = b.y - b.height / 2, bBottom = b.y + b.height / 2;
-  const intersection = Math.max(0, Math.min(aRight, bRight) - Math.max(aLeft, bLeft))
-    * Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
-  return intersection / (a.width * a.height);
+async function workflowFrame(env, item) {
+  const cfg = config(env);
+  const frameId = cfg.workflowFrameId || itemParent(item);
+  if (!frameId) return { ok: false, stage: 'miro-workflow-frame-unknown', reason: 'No verified workflow frame; card was not moved' };
+  // A confirmed child already supplies the pinned frame ID and local origin.
+  // In that case a frame's absolute canvas offset is unnecessary. If Miro's
+  // frame-detail endpoint is unavailable, retain local-space positioning using
+  // the admin-configured bounds; never guess an absolute canvas offset.
+  const canUsePinnedLocalSpace = cfg.workflowFrameId === frameId && itemParent(item) === frameId && itemReference(item) === 'parent_top_left';
+  const localFrame = () => ({ ok: true, id: frameId, source: 'pinned-frame-local-space',
+    frame: { geometry: { width: cfg.layout.board.right, height: cfg.layout.board.bottom } }, left: NaN, top: NaN });
+  const cacheKey = `${env.MIRO_BOARD_ID}:${frameId}`;
+  if (canUsePinnedLocalSpace && Date.now() - (failedFrameReads.get(cacheKey) || 0) < 30_000) return localFrame();
+  const read = await getItem(env, frameId, { type: 'frame', signal: AbortSignal.timeout(5000) }).catch(() => ({ ok: false }));
+  if (!read.ok || !read.found) {
+    if (canUsePinnedLocalSpace && !read.ok) { failedFrameReads.set(cacheKey, Date.now()); return localFrame(); }
+    return { ok: false, stage: 'miro-workflow-frame-read', miroStatus: read.status };
+  }
+  failedFrameReads.delete(cacheKey);
+  const frame = read.item;
+  const width = Number(frame?.geometry?.width), height = Number(frame?.geometry?.height);
+  if (frame.type !== 'frame' || ![width, height].every(Number.isFinite)
+    || width + 1 < cfg.layout.board.right || height + 1 < cfg.layout.board.bottom
+    || Math.abs(Number(frame.rotation || 0)) > 0.01) {
+    return { ok: false, stage: 'miro-workflow-frame-invalid', reason: 'Workflow frame geometry is unsafe; card was not moved' };
+  }
+  const canvas = await resolveCanvasPosition(env, frame);
+  if (!canvas) return { ok: false, stage: 'miro-workflow-frame-position' };
+  return { ok: true, id: frameId, frame, left: canvas.x - width / 2, top: canvas.y - height / 2 };
 }
 
-async function collisionFreePosition(env, item, base, target, mode) {
-  const cfg = config(env);
-  const width = Number(item?.geometry?.width ?? item?.width);
-  const height = Number(item?.geometry?.height ?? item?.height);
-  if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0) return { ...base, adjusted: false };
-
-  const others = [];
-  if (mode === 'parent-local') {
-    const parentId = String(item?.parent?.id ?? item?.parentId ?? '');
-    // Miro's REST API can ignore parent_item_id when combined with type.
-    // Fetch images first and filter by parent locally so collisions are reliable.
-    const listed = await listItems(env, { type: 'image' });
-    if (!listed.ok) return { ...base, adjusted: false };
-    for (const other of listed.items) {
-      const otherParentId = String(other?.parent?.id ?? other?.parentId ?? '');
-      // Miro may omit parent metadata on listed images. Only exclude a card
-      // when both parent IDs are known and explicitly different.
-      if ((otherParentId && parentId && otherParentId !== parentId) || String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
-      const x = Number(other?.position?.x ?? other?.x), y = Number(other?.position?.y ?? other?.y);
-      const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
-      if ([x, y, w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x, y, width: w, height: h });
-    }
-  } else {
-    const listed = await listItems(env, { type: 'image' });
-    if (!listed.ok) return { ...base, adjusted: false };
-    for (const other of listed.items) {
-      if (String(other?.id) === String(item?.id) || !issueKeyFromImage(other)) continue;
-      const position = await resolveCanvasPosition(env, other);
-      const w = Number(other?.geometry?.width ?? other?.width), h = Number(other?.geometry?.height ?? other?.height);
-      if (position && [w, h].every(Number.isFinite) && w > 0 && h > 0) others.push({ x: position.x, y: position.y, width: w, height: h });
-    }
-  }
-
-  const isValid = candidate => {
-    const localX = mode === 'parent-local' ? candidate.x : candidate.x - base.frameLeft;
-    const localY = mode === 'parent-local' ? candidate.y : candidate.y - base.frameTop;
-    return insideBoard(cfg.layout, localX, localY) && overlap(localX, width, target) >= cfg.overlapThreshold;
-  };
-  const collides = candidate => others.some(other => cardOverlapRatio({ x: candidate.x, y: candidate.y, width, height }, other) > COLLISION_OVERLAP_LIMIT);
-  const normal = { x: base.x, y: base.y };
-  if (isValid(normal) && !collides(normal)) return { ...base, adjusted: false };
-
-  // Search horizontally only. A Jira status change may adjust X to avoid a
-  // collision, but must preserve the user's Y position.
-  for (const direction of COLLISION_DIRECTIONS) {
-    for (let radius = 1; radius <= 24; radius += 1) {
-      const offset = { x: direction.x * COLLISION_STEP * radius, y: direction.y * COLLISION_STEP * radius };
-      const candidate = { x: base.x + offset.x, y: base.y + offset.y };
-      if (isValid(candidate) && !collides(candidate)) return { ...base, ...candidate, adjusted: true, offset };
-    }
-  }
-  return { ...base, adjusted: false };
+async function localPosition(env, item, frame) {
+  const ref = itemReference(item);
+  if (itemParent(item) === frame.id && ref === 'parent_top_left') return { x: Number(item.position.x), y: Number(item.position.y) };
+  if (!['canvas_center', 'parent_top_left', 'parent_center'].includes(ref)) return null;
+  const canvas = await resolveCanvasPosition(env, item);
+  return canvas ? { x: canvas.x - frame.left, y: canvas.y - frame.top } : null;
 }
 
-async function findWorkflowFrame(env, canvasX, canvasY) {
-  const cfg = config(env);
-  const frames = await listItems(env, { type: 'frame' });
-  if (!frames.ok) return null;
-  return frames.items.map(frame => {
-    const x = Number(frame?.position?.x), y = Number(frame?.position?.y), width = Number(frame?.geometry?.width), height = Number(frame?.geometry?.height);
-    if (![x, y, width, height].every(Number.isFinite) || width < cfg.layout.board.right || height < cfg.layout.board.bottom) return null;
-    const left = x - width / 2, top = y - height / 2;
-    const localX = canvasX - left, localY = canvasY - top;
-    return insideBoard(cfg.layout, localX, localY) ? { frame, left, top, localX, localY, area: width * height } : null;
-  }).filter(Boolean).sort((a, b) => a.area - b.area)[0] || null;
+async function clearHorizontalPosition(env, item, frame, target, y) {
+  const cfg = config(env), width = Number(item.geometry.width), height = Number(item.geometry.height || cfg.card.height);
+  // Only inspect this frame, with a hard time budget. Never scan every image
+  // and then read every image's parent before a single status movement.
+  let children;
+  try { children = await listItems(env, { parent_item_id: frame.id }, { signal: AbortSignal.timeout(2000) }); }
+  catch { return target.targetX; }
+  if (!children.ok) return target.targetX;
+  const others = children.items.filter(other => String(other.id) !== String(item.id)
+    && itemParent(other) === frame.id && itemReference(other) === 'parent_top_left' && issueKeyFromImage(other));
+  const valid = x => x - width / 2 >= 0 && x + width / 2 <= Number(frame.frame.geometry.width)
+    && overlap(x, width, target) >= cfg.overlapThreshold;
+  const free = x => !others.some(other => {
+    const w = Number(other.geometry?.width), h = Number(other.geometry?.height || height);
+    const dx = Math.max(0, Math.min(x + width / 2, Number(other.position?.x) + w / 2) - Math.max(x - width / 2, Number(other.position?.x) - w / 2));
+    const dy = Math.max(0, Math.min(y + height / 2, Number(other.position?.y) + h / 2) - Math.max(y - height / 2, Number(other.position?.y) - h / 2));
+    return dx * dy / (width * height) > 0.95;
+  });
+  for (let n = 0; n <= 24; n++) for (const sign of n ? [1, -1] : [1]) {
+    const x = target.targetX + sign * n * 12;
+    if (valid(x) && free(x)) return x;
+  }
+  return target.targetX;
+}
+
+async function writeWorkflowPosition(env, item, frame, target, x, y) {
+  const cfg = config(env), width = Number(item.geometry.width), height = Number(item.geometry.height || cfg.card.height);
+  if (!insideBoard(cfg.layout, x, y) || ![x, y, width, height].every(Number.isFinite)
+    || x - width / 2 < 0 || x + width / 2 > Number(frame.frame.geometry.width)
+    || y - height / 2 < 0 || y + height / 2 > Number(frame.frame.geometry.height)
+    || overlap(x, width, target) < cfg.overlapThreshold) return { ok: false, stage: 'miro-unsafe-destination', moved: false };
+  // Reject a stale plan if someone moved the card while reads were in flight.
+  const fresh = await getItem(env, item.id, { type: 'image', signal: AbortSignal.timeout(5000) });
+  if (!fresh.ok || !fresh.found || !samePosition(item, fresh.item)) return { ok: false, stage: 'miro-move-stale-position', moved: false };
+  const issueKey = issueKeyFromImage(item);
+  const before = { itemId: String(item.id), parentId: itemParent(item), reference: itemReference(item), position: item.position, recordedAt: new Date().toISOString() };
+  await env.CARD_MAP.put(`move-before:${issueKey}`, JSON.stringify(before));
+  const patch = { parent: { id: frame.id }, position: { x, y, origin: 'center', relativeTo: 'parent_top_left' } };
+  const response = await patchItem(env, item.id, patch);
+  if (!response.ok) return { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
+  const check = await getItem(env, item.id, { type: 'image', signal: AbortSignal.timeout(5000) });
+  if (!check.ok || !check.found) return { ok: false, stage: 'miro-move-verification-unavailable', itemId: String(item.id) };
+  const actual = await localPosition(env, check.item, frame);
+  if (issueKeyFromImage(check.item) !== issueKey || itemParent(check.item) !== frame.id || !actual
+    || Math.abs(actual.x - x) > 1 || Math.abs(actual.y - y) > 1 || overlap(actual.x, width, target) < cfg.overlapThreshold) {
+    await env.CARD_MAP.put(`move-quarantine:${item.id}`, JSON.stringify({ before, expected: patch, actual: check.item.position, parentId: itemParent(check.item) }));
+    console.error('Miro position verification failed; automatic movement blocked', { issueKey, itemId: String(item.id), expected: patch, actual: check.item.position, actualParentId: itemParent(check.item) });
+    return { ok: false, stage: 'miro-move-verification-failed', quarantined: true, itemId: String(item.id) };
+  }
+  const result = { ok: true, mapped: true, moved: true, verified: true, itemId: String(item.id), parentId: frame.id,
+    toX: actual.x, yPreserved: actual.y, movementMode: 'parent-top-left-explicit' };
+  await env.CARD_MAP.put(`move-confirmed:${issueKey}`, JSON.stringify({ ...result, status: target.status, verifiedAt: new Date().toISOString() }));
+  console.log('Miro status position confirmed', { issueKey, ...result, status: target.status });
+  return result;
 }
 
 export async function moveMappedItemToStatus(env, itemId, status) {
   const cfg = config(env);
   const target = cfg.layout.columns.find(column => normalizeStatus(column.status) === normalizeStatus(status));
   if (!target) return { ok: true, moved: false, ignored: true, reason: `Unapproved status: ${status}` };
-  const read = await getItem(env, itemId);
+  if (await env.CARD_MAP.get(`move-quarantine:${itemId}`)) return { ok: false, stage: 'miro-move-quarantined', moved: false };
+  const read = await getItem(env, itemId, { type: 'image', signal: AbortSignal.timeout(5000) });
   if (!read.ok) return { ok: false, stage: 'miro-read', miroStatus: read.status, error: read.error };
   if (!read.found) return { ok: true, mapped: false, moved: false, missing: true };
   const item = read.item;
-  if (String(item?.type ?? '') !== 'image' || !issueKeyFromImage(item)) return { ok: true, mapped: false, moved: false, missing: true, unsupported: true };
-  const incomingParentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
-  if (incomingParentId && incomingParentId === cfg.incomingFrameId) return { ok: true, mapped: true, moved: false, parked: true, reason: 'Incoming card requires manual placement' };
+  if (item.type !== 'image' || !issueKeyFromImage(item)) return { ok: true, mapped: false, moved: false, missing: true, unsupported: true };
+  if (itemParent(item) === cfg.incomingFrameId) return { ok: true, mapped: true, moved: false, parked: true, reason: 'Incoming card requires manual placement' };
+  const frame = await workflowFrame(env, item);
+  if (!frame.ok) return frame;
+  const position = await localPosition(env, item, frame);
+  if (!position) return { ok: false, stage: 'miro-unknown-coordinate-reference', moved: false };
+  if (!insideBoard(cfg.layout, position.x, position.y)) return { ok: true, mapped: true, moved: false, parked: true };
+  const width = Number(item.geometry?.width);
+  if (!Number.isFinite(width) || width <= 0) return { ok: false, stage: 'miro-geometry' };
+  if (overlap(position.x, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
+  const x = await clearHorizontalPosition(env, item, frame, target, position.y);
+  return writeWorkflowPosition(env, item, frame, target, x, position.y);
+}
 
-  const width = Number(item?.geometry?.width ?? item?.width);
-  const rawX = Number(item?.position?.x ?? item?.x), rawY = Number(item?.position?.y ?? item?.y);
-  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(rawX) || !Number.isFinite(rawY)) return { ok: false, stage: 'miro-geometry', reason: 'Invalid Miro item geometry' };
+export async function inspectMappedPosition(env, issueKey) {
+  const itemId = await env.CARD_MAP.get(customMapKey(issueKey));
+  const item = itemId ? await getItem(env, itemId, { type: 'image', signal: AbortSignal.timeout(10000) }).catch(error => ({ ok: false, error: String(error) })) : null;
+  const frame = item?.ok && item.found ? await workflowFrame(env, item.item).catch(error => ({ ok: false, error: String(error) })) : null;
+  const result = { issueKey, itemId, item, frame, layout: config(env).layout, inspectedAt: new Date().toISOString() };
+  await env.CARD_MAP.put(`position-inspection:${issueKey}`, JSON.stringify(result));
+  console.log('Miro position inspection', result);
+  return result;
+}
 
-  const relativeTo = String(item?.position?.relativeTo ?? item?.relativeTo ?? 'canvas_center');
-  const parentId = String(item?.parent?.id ?? item?.parentId ?? '').trim();
-  if (parentId && relativeTo.startsWith('parent_')) {
-    const cachedParent = workflowParentCache.get(parentId);
-    const cacheValid = cachedParent && Date.now() - cachedParent < WORKFLOW_PARENT_CACHE_TTL_MS;
-    const parentRead = cacheValid
-      ? {
-        ok: true,
-        found: true,
-        item: { geometry: { width: cfg.layout.board.right, height: cfg.layout.board.bottom } },
-      }
-      : await getItem(env, parentId);
-    if (!cacheValid && parentRead.ok && parentRead.found) {
-      const width = Number(parentRead.item?.geometry?.width);
-      const height = Number(parentRead.item?.geometry?.height);
-      if (width >= cfg.layout.board.right && height >= cfg.layout.board.bottom) {
-        workflowParentCache.set(parentId, Date.now());
-      }
-    }
-    const parent = parentRead?.item;
-    const parentWidth = Number(parent?.geometry?.width), parentHeight = Number(parent?.geometry?.height);
-    if (parentRead.ok && parentRead.found && Number.isFinite(parentWidth) && Number.isFinite(parentHeight) && parentWidth >= cfg.layout.board.right && parentHeight >= cfg.layout.board.bottom && insideBoard(cfg.layout, rawX, rawY)) {
-      if (overlap(rawX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
-      const placement = await collisionFreePosition(env, item, { x: target.targetX, y: rawY }, target, 'parent-local');
-      const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
-      return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: rawX, toX: placement.x, yPreserved: placement.y, movementMode: 'parent-local', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
-    }
-  }
-
-  const canvas = await resolveCanvasPosition(env, item);
-  if (!canvas) return { ok: false, stage: 'miro-resolve-position', reason: 'Could not resolve canvas position' };
-  const frame = await findWorkflowFrame(env, canvas.x, canvas.y);
-  if (!frame) return { ok: true, mapped: true, moved: false, parked: true };
-  if (overlap(frame.localX, width, target) >= cfg.overlapThreshold) return { ok: true, mapped: true, moved: false, reason: 'Already in correct column' };
-  const targetCanvasX = frame.left + target.targetX;
-  const placement = await collisionFreePosition(env, item, { x: targetCanvasX, y: canvas.y, frameLeft: frame.left, frameTop: frame.top }, target, 'canvas');
-  const response = await patchItem(env, itemId, { position: { x: placement.x, y: placement.y, origin: 'center' } });
-  return response.ok ? { ok: true, mapped: true, moved: true, itemId, fromX: canvas.x, toX: placement.x, yPreserved: placement.y, movementMode: 'canvas', collisionAdjusted: placement.adjusted, collisionOffset: placement.offset || null } : { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
+export async function repairMappedPosition(env, issueKey, parentId, localY, expectedStatus) {
+  const cfg = config(env);
+  if (!cfg.workflowFrameId || parentId !== cfg.workflowFrameId || !Number.isFinite(localY)) return { ok: false, stage: 'repair-unverified-frame-or-row' };
+  const itemId = await env.CARD_MAP.get(customMapKey(issueKey));
+  const read = itemId ? await getItem(env, itemId, { type: 'image', signal: AbortSignal.timeout(10000) }) : null;
+  if (!read?.ok || !read.found || issueKeyFromImage(read.item) !== issueKey) return { ok: false, stage: 'repair-card-identity' };
+  const frame = await workflowFrame(env, read.item);
+  if (!frame.ok) return frame;
+  const target = cfg.layout.columns.find(column => normalizeStatus(column.status) === normalizeStatus(expectedStatus));
+  if (!target) return { ok: false, stage: 'repair-unapproved-status' };
+  const result = await writeWorkflowPosition(env, read.item, frame, target, target.targetX, localY);
+  if (result.verified) await env.CARD_MAP.delete(`move-quarantine:${itemId}`);
+  return result;
 }
 
 export async function registerMappings(env, entries) {

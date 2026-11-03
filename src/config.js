@@ -80,6 +80,7 @@ export function config(env) {
     jiraProjectKey: String(env.JIRA_PROJECT_KEY || 'SN').trim().toUpperCase(),
     jiraSiteUrl: String(env.JIRA_SITE_URL || 'https://rendradev.atlassian.net').replace(/\/+$/, ''),
     incomingFrameId: String(env.MIRO_INCOMING_FRAME_ID || '3458764681916843188').trim(),
+    workflowFrameId: String(env.MIRO_WORKFLOW_FRAME_ID || '').trim(),
     layout,
     overlapThreshold: clamp(asNumber(env.STATUS_OVERLAP_THRESHOLD, 0.6), 0, 1),
     fields: {

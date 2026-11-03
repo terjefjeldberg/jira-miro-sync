@@ -77,7 +77,7 @@ const baseEnv = {
   let patchBody = null;
   globalThis.fetch = async (url, init = {}) => {
     const value = String(url);
-    if (value.endsWith('/items/img-3') && !init.method) return json({ id: 'img-3', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-3' }, position: { x: 10, y: 20 }, geometry: { width: 320 } });
+    if (value.endsWith('/images/img-3') && !init.method) return json({ id: 'img-3', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-3' }, position: { x: 10, y: 20 }, geometry: { width: 320 } });
     if (value.endsWith('/items/img-3') && init.method === 'PATCH') { patchBody = JSON.parse(init.body); return json({ id: 'img-3' }); }
     throw new Error(`Unexpected fetch ${value}`);
   };
@@ -85,7 +85,7 @@ const baseEnv = {
   assert.equal(result.ok, true);
   assert.equal(result.itemId, 'img-3');
   assert.deepEqual(patchBody.parent, { id: null });
-  assert.deepEqual(patchBody.position, { x: 123, y: 456, origin: 'center' });
+  assert.deepEqual(patchBody.position, { x: 123, y: 456, origin: 'center', relativeTo: 'canvas_center' });
   globalThis.fetch = oldFetch;
 }
 
@@ -192,6 +192,7 @@ function token(secret) {
     if (value.includes('/issue/SN-4/comment?')) {
       return json({ comments: [], total: 0, maxResults: 100, startAt: 0 });
     }
+    if (value.includes('/items?') && value.includes('parent_item_id=')) return json({ data: [] });
     if (value.includes('/issue/SN-4/changelog?')) return json({ total: 0, values: [] });
     if (value.includes('/issue/SN-4?fields=')) {
       return json({ fields: { summary: 'Recovered card', priority: { name: 'Medium' }, assignee: null, issuetype: { name: 'Bug' }, status: { name: 'In progress' }, customfield_11208: '2026-09-07' } });
@@ -199,10 +200,10 @@ function token(secret) {
     if (value.includes('/items?') && value.includes('type=image')) {
       return json({ data: [{ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } }] });
     }
-    if (value.endsWith('/items/img-4') && !init.method) {
-      return json({ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } });
+    if (value.endsWith('/images/img-4') && !init.method) {
+      return json({ id: 'img-4', type: 'image', data: { title: 'CUSTOM_JIRA_CARD:SN-4' }, position: moveBody?.position || { x: 1990, y: 1000, relativeTo: 'parent_top_left' }, parent: { id: 'workflow-frame' }, geometry: { width: 320 } });
     }
-    if (value.endsWith('/items/workflow-frame')) {
+    if (value.endsWith('/frames/workflow-frame')) {
       return json({ id: 'workflow-frame', type: 'frame', position: { x: 3000, y: 2000 }, geometry: { width: 6000, height: 4000 } });
     }
     if (value.endsWith('/items/img-4') && init.method === 'PATCH') {
@@ -227,7 +228,7 @@ function token(secret) {
   assert.equal(body.moved, true);
   assert.equal(await kv.get(customMapKey('SN-4')), 'img-4');
   assert.deepEqual(finalWrites, ['refresh', 'refresh', 'move']);
-  assert.deepEqual(moveBody.position, { x: 2923.455009676509, y: 1000, origin: 'center' });
+  assert.deepEqual(moveBody.position, { x: 2923.455009676509, y: 1000, origin: 'center', relativeTo: 'parent_top_left' });
   globalThis.fetch = oldFetch;
 }
 

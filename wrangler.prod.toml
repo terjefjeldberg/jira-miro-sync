@@ -3,6 +3,9 @@ main = "src/index.js"
 compatibility_date = "2026-08-24"
 keep_vars = true
 
+[vars]
+MIRO_WORKFLOW_FRAME_ID = "3458764684156039511"
+
 [[durable_objects.bindings]]
 name = "MIRO_CARD_DELIVERY"
 class_name = "MiroCardDelivery"

@@ -2,7 +2,7 @@ import { assigneeColorKey, config, customMapKey, directPendingKey, freezeKey, is
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getCardSummaries, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
-import { getItem, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, resumeCardUpload } from './miro.js';
+import { getItem, inspectMappedPosition, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, repairMappedPosition, resumeCardUpload } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 import { auditJiraStatusChanges, hasMovement, logMovementAudit, prepareMovementAudit } from './movement-audit.js';
 
@@ -215,7 +215,7 @@ async function rollbackCustomCard(request, env) {
   }
   const response = await patchItem(env, itemId, {
     parent: { id: previousParentId || null },
-    position: { x: previousX, y: previousY, origin: 'center' },
+    position: { x: previousX, y: previousY, origin: 'center', relativeTo: previousParentId ? 'parent_top_left' : 'canvas_center' },
   });
   if (!response.ok) return json({ ok: false, stage: 'miro-rollback', miroStatus: response.status, error: await response.text() }, 502);
   return json({ ok: true, rolledBack: true, issueKey, itemId, previousParentId, previousX, previousY });
@@ -351,16 +351,25 @@ async function setConversionStatus(request, env) {
   return json({ ...result, issueKey }, result.ok ? 200 : (result.status || 500));
 }
 
-async function processJiraWebhookBody(body, env) {
+async function processJiraWebhookBody(body, env, ctx) {
   const issueKey = normalizeIssueKey(body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
+  if (body.event === 'inspect_position') return json(await inspectMappedPosition(env, issueKey));
+  if (body.event === 'repair_position') {
+    const live = await getCardData(env, issueKey);
+    if (!live.ok || String(live.status).toLowerCase() !== String(body.expectedStatus).toLowerCase()) return json({ ok: false, stage: 'repair-jira-status-changed' }, 409);
+    const result = await repairMappedPosition(env, issueKey, String(body.parentId), body.localY, live.status);
+    await env.CARD_MAP.put(`position-repair:${issueKey}`, JSON.stringify(result));
+    console.log('Miro position repair result', { issueKey, ...result });
+    return json(result, result.ok ? 200 : 502);
+  }
   const issueCreated = isIssueCreationWebhook(body);
   let status = String(body.status ?? '').trim();
   let live = await getCardData(env, issueKey).catch(() => null);
   if (live?.ok && live.status) status = live.status;
   if (!issueCreated && (body.status || changedWebhookFields(body).includes('status')) && !String(body.webhookEvent ?? '').includes('comment')) {
-    try { await auditJiraStatusChanges(env, issueKey); }
-    catch (error) { console.error('Jira status audit lookup failed', { issueKey, error: String(error) }); }
+    const audit = auditJiraStatusChanges(env, issueKey).catch(error => console.error('Jira status audit lookup failed', { issueKey, error: String(error) }));
+    if (ctx?.waitUntil) ctx.waitUntil(audit); else await audit;
   }
 
   const frozen = await env.CARD_MAP.get(freezeKey(issueKey), 'json').catch(() => null);
@@ -528,7 +537,7 @@ export class MiroCardDelivery {
         if (!response.ok || details.ok !== true) throw new Error(JSON.stringify(details));
         const itemId = String(await this.env.CARD_MAP.get(customMapKey(issueKey)) ?? '').trim();
         if (!itemId) throw new Error('Card mapping is missing; delivery is not confirmed');
-        const read = await getItem(this.env, itemId);
+        const read = await getItem(this.env, itemId, { type: 'image' });
         if (!read.ok) throw new Error(JSON.stringify(read));
         if (!read.found || read.item?.type !== 'image' || issueKeyFromImage(read.item) !== issueKey) {
           await this.env.CARD_MAP.delete(customMapKey(issueKey));
@@ -567,14 +576,14 @@ export class MiroCardDelivery {
 }
 
 export default {
-  async queue(batch, env) {
+  async queue(batch, env, ctx) {
     for (const message of batch.messages) {
       let response;
       try {
         const body = message.body ?? {};
         response = isIssueCreationWebhook(body)
           ? await scheduleCardDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
-          : await processJiraWebhookBody(body, env);
+          : await processJiraWebhookBody(body, env, ctx);
       } catch (error) {
         console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error', message: error?.message ?? String(error), stack: error?.stack ?? '' });
         throw error;

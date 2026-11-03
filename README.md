@@ -116,6 +116,35 @@ For production migration, create a separate Worker/KV namespace and set these va
 
 ## Debugging
 
+### Safe workflow positioning
+
+Production pins `MIRO_WORKFLOW_FRAME_ID=3458764684156039511`. Workflow moves
+always send this parent plus `position.relativeTo=parent_top_left`, keeping Y
+in that frame's local coordinates. Bare position writes are rejected. Canvas
+coordinates are converted before writing; missing/ambiguous references fail
+closed. A card outside the workflow or in Incoming stays parked.
+
+Each write rechecks the source position, saves `move-before:<issue>`, then reads
+the image back and verifies its identity, parent, destination and Y before
+saving `move-confirmed:<issue>`. A mismatched successful response stores
+`move-quarantine:<image-id>` and blocks further automatic moves of that image.
+`Miro status position confirmed` is logged only after read-back succeeds.
+Use image/frame-specific GET endpoints. For a confirmed child of the pinned
+frame, local positioning needs no absolute frame offset: if the frame-detail
+API fails, configured local bounds remain usable with explicit parent/reference
+and mandatory image read-back. This fallback never applies to canvas positions
+or an unrecognized frame. Frame lookup failures are backed off for 30 seconds.
+
+Collision checks read only frame children with a two-second budget, without
+per-image parent requests. Jira author-history lookup runs through the queue's
+execution context in the background rather than holding up a movement.
+
+Protected Jira webhook/Cloudflare queue maintenance events `inspect_position`
+and `repair_position` save `position-inspection:<issue>` and
+`position-repair:<issue>`. Repair requires the pinned parent, an explicit local
+Y, and a matching live Jira status; it uses the same verified write routine.
+These are operator recovery commands, not automatic relocation of parked cards.
+
 ### Status and movement audit
 
 Cloudflare Logs messages `Jira status change` and `Miro card movement` include
