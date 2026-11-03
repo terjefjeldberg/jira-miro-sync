@@ -118,6 +118,16 @@ For production migration, create a separate Worker/KV namespace and set these va
 
 ### Safe workflow positioning
 
+Status/field webhooks are durably stored in a per-board/issue status job using
+the existing `MiroCardDelivery` binding, separate from card creation. The Queue
+also hands existing update messages to that job. It retries after 5–60 seconds
+without a finite attempt limit, reading the current Jira status each time.
+Duplicate updates coalesce without discarding a pending content refresh.
+Image reads allow 30 seconds; a timeout never confirms placement. Receipts and
+pending failures are available at `status-delivery:<issue>`. Completion requires
+verified placement or an explicit non-applicable result (e.g. a parked card).
+Quarantine still blocks writes; persistent retries never bypass safety checks.
+
 Production pins `MIRO_WORKFLOW_FRAME_ID=3458764684156039511`. Workflow moves
 always send this parent plus `position.relativeTo=parent_top_left`, keeping Y
 in that frame's local coordinates. Bare position writes are rejected. Canvas

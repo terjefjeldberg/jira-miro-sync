@@ -461,6 +461,7 @@ async function jiraWebhook(request, env) {
   const issueKey = normalizeIssueKey(body.issueKey ?? body.issue?.key);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
   if (isIssueCreationWebhook(body)) return scheduleCardDelivery(env, { ...body, issueKey });
+  if (env.MIRO_CARD_DELIVERY) return scheduleStatusDelivery(env, { ...body, issueKey });
 
   // When the Queue binding exists, acknowledge Jira immediately and let the
   // consumer perform the potentially slow Jira/Miro work. Until then the
@@ -486,10 +487,18 @@ async function scheduleCardDelivery(env, body) {
   }));
 }
 
+async function scheduleStatusDelivery(env, body) {
+  const id = env.MIRO_CARD_DELIVERY.idFromName(`status:${env.MIRO_BOARD_ID}:${body.issueKey}`);
+  return env.MIRO_CARD_DELIVERY.get(id).fetch(new Request('https://card-delivery/ensure-status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
 // One persistent job per board/issue, independent of Queue retry/retention
 // limits. External I/O is serialized inside the object, not with a KV lock.
 export class MiroCardDelivery {
   constructor(ctx, env) {
+    this.ctx = ctx;
     this.storage = ctx.storage;
     this.env = { ...env, MIRO_DELIVERY_STORAGE: ctx.storage };
     this.tail = Promise.resolve();
@@ -506,10 +515,18 @@ export class MiroCardDelivery {
       return this.serial(async () => json({ pending: await this.storage.get('job') ?? null, confirmed: await this.storage.get('confirmed') ?? null }));
     }
     const body = await request.json();
-    if (!issueKeyIsValid(body.issueKey, this.env) || !isIssueCreationWebhook(body)) return json({ ok: false }, 400);
+    const statusJob = new URL(request.url).pathname === '/ensure-status';
+    if (!issueKeyIsValid(body.issueKey, this.env) || (!statusJob && !isIssueCreationWebhook(body))) return json({ ok: false }, 400);
     return this.serial(async () => {
       await this.storage.transaction(async txn => {
-        if (!await txn.get('job')) await txn.put('job', { body, attempts: 0, acceptedAt: new Date().toISOString() });
+        const previous = await txn.get('job');
+        if (statusJob || !previous) {
+          // Coalesce notifications, but never discard a pending content refresh.
+          const merged = statusJob && previous ? { ...body, changedFields: [...new Set([
+            ...(needsCardRefresh(previous.body) ? ['content'] : []), ...changedWebhookFields(body),
+          ])] } : body;
+          await txn.put('job', { body: merged, mode: statusJob ? 'status' : 'create', attempts: 0, acceptedAt: new Date().toISOString() });
+        }
         if (!await txn.getAlarm()) await txn.setAlarm(Date.now() + 1000);
       });
       return json({ ok: true, accepted: true, confirmed: false, delivery: 'pending', issueKey: body.issueKey }, 202);
@@ -522,7 +539,7 @@ export class MiroCardDelivery {
       if (!job) return;
       job.attempts += 1;
       const issueKey = job.body.issueKey;
-      const delaySeconds = Math.min(3600, 15 * 2 ** Math.min(job.attempts - 1, 8));
+      const delaySeconds = job.mode === 'status' ? Math.min(60, 5 * 2 ** Math.min(job.attempts - 1, 4)) : Math.min(3600, 15 * 2 ** Math.min(job.attempts - 1, 8));
       // Persist the next wakeup BEFORE any network request. Even a crash or
       // a sufficiently long Miro outage cannot consume a finite retry budget.
       await this.storage.transaction(async txn => {
@@ -530,6 +547,28 @@ export class MiroCardDelivery {
         await txn.setAlarm(Date.now() + delaySeconds * 1000);
       });
       try {
+        if (job.mode === 'status') {
+          // An old queued notification must never restore an obsolete status.
+          const live = await getCardData(this.env, issueKey);
+          if (!live.ok || !live.status) throw new Error('Current Jira status is unavailable');
+          const response = await processJiraWebhookBody({ ...job.body, status: live.status }, this.env, this.ctx);
+          const details = await response.json();
+          if (!response.ok || details.ok !== true) throw new Error(JSON.stringify(details));
+          const movement = details.custom;
+          const verified = movement?.verified === true || movement?.reason === 'Already in correct column';
+          const inactive = movement?.parked || movement?.ignored || details.skipped || details.conversionPositionPreserved;
+          if (!verified && !inactive) throw new Error(`Status placement not confirmed: ${JSON.stringify(details)}`);
+          const confirmed = { issueKey, status: details.status, attempts: job.attempts, verified,
+            disposition: verified ? 'confirmed' : 'not-applicable', details, confirmedAt: new Date().toISOString() };
+          await this.storage.transaction(async txn => {
+            await txn.put('confirmed', confirmed);
+            await txn.delete('job');
+            await txn.deleteAlarm();
+          });
+          await this.env.CARD_MAP.put(`status-delivery:${issueKey}`, JSON.stringify(confirmed));
+          console.log(verified ? 'Miro status delivery confirmed' : 'Miro status delivery not applicable', confirmed);
+          return;
+        }
         const resumed = await resumeCardUpload(this.env, issueKey);
         if (!resumed.ok) throw new Error(JSON.stringify(resumed));
         const response = await processJiraWebhookBody(job.body, this.env);
@@ -569,7 +608,8 @@ export class MiroCardDelivery {
           await txn.put('job', job);
           await txn.setAlarm(Date.now() + delaySeconds * 1000);
         });
-        console.error('Miro card delivery pending; retry scheduled', { issueKey, attempts: job.attempts, delaySeconds, error: job.lastError });
+        if (job.mode === 'status') await this.env.CARD_MAP.put(`status-delivery:${issueKey}`, JSON.stringify({ issueKey, status: 'pending', attempts: job.attempts, nextAttemptAt: job.nextAttemptAt, error: job.lastError }));
+        console.error(job.mode === 'status' ? 'Miro status delivery pending; retry scheduled' : 'Miro card delivery pending; retry scheduled', { issueKey, attempts: job.attempts, delaySeconds, error: job.lastError });
       }
     });
   }
@@ -581,9 +621,12 @@ export default {
       let response;
       try {
         const body = message.body ?? {};
+        const diagnostic = ['inspect_position', 'repair_position'].includes(body.event);
         response = isIssueCreationWebhook(body)
           ? await scheduleCardDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
-          : await processJiraWebhookBody(body, env, ctx);
+          : env.MIRO_CARD_DELIVERY && !diagnostic
+            ? await scheduleStatusDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
+            : await processJiraWebhookBody(body, env, ctx);
       } catch (error) {
         console.error('Jira to Miro processing exception', { name: error?.name ?? 'Error', message: error?.message ?? String(error), stack: error?.stack ?? '' });
         throw error;

@@ -160,6 +160,57 @@ try {
   await delivery.alarm();
   assert.ok(await storage.get('job'));
   assert.ok(await storage.getAlarm());
+
+  // Status placement survives more failures than the Queue's retry budget,
+  // plus eviction. An obsolete webhook must use the CURRENT Jira status.
+  const statusStorage = new Storage(), statusKv = new Storage();
+  await statusKv.put(customMapKey('SN-1'), 'image-1');
+  const statusLayout = { board: { left: 0, right: 4600, top: 0, bottom: 2600 }, columns: [
+    { status: 'Todo', left: 700, right: 1800, targetX: 1250 },
+    { status: 'Functional review', left: 2500, right: 2900, targetX: 2700 },
+  ] };
+  const statusEnv = { ...base, CARD_MAP: statusKv, MIRO_WORKFLOW_FRAME_ID: 'workflow', WORKFLOW_LAYOUT_JSON: JSON.stringify(statusLayout) };
+  let liveStatus = 'Functional review', statusFailures = 8, statusPatches = 0;
+  let statusItem = { ...structuredClone(item), parent: { id: 'workflow' }, position: { x: 1250, y: 1100, relativeTo: 'parent_top_left' } };
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url);
+    if (path.includes('/changelog')) return json({ values: [] });
+    if (path.includes('/issue/SN-1?')) return json({ fields: { status: { name: liveStatus } } });
+    if (path.endsWith('/images/image-1')) {
+      if (statusFailures-- > 0) throw new DOMException('Timed out', 'TimeoutError');
+      return json(statusItem);
+    }
+    if (path.endsWith('/frames/workflow')) return json({ id: 'workflow', type: 'frame', geometry: { width: 4600, height: 2600 }, position: { x: -5000, y: -8000, relativeTo: 'canvas_center' } });
+    if (path.includes('/items?')) return json({ data: [] });
+    if (path.endsWith('/items/image-1') && init.method === 'PATCH') {
+      statusPatches++; statusItem = { ...statusItem, ...JSON.parse(init.body) }; return json(statusItem);
+    }
+    throw new Error(`Unexpected status request ${path}`);
+  };
+  const requestStatus = (status = 'Todo') => new Request('https://delivery/ensure-status', { method: 'POST', body: JSON.stringify({ issueKey: 'SN-1', status, changedFields: ['status'] }) });
+  let statusDelivery = new MiroCardDelivery({ storage: statusStorage }, statusEnv);
+  assert.equal((await statusDelivery.fetch(requestStatus())).status, 202);
+  for (let n = 0; n < 8; n++) {
+    statusDelivery = new MiroCardDelivery({ storage: statusStorage }, statusEnv);
+    await statusDelivery.alarm();
+    assert.ok(await statusStorage.get('job'));
+    assert.ok(await statusStorage.getAlarm());
+    assert.equal(statusPatches, 0);
+  }
+  await statusDelivery.alarm();
+  assert.equal((await statusStorage.get('confirmed')).verified, true);
+  assert.equal(statusItem.position.x, 2700);
+  assert.equal(statusItem.position.y, 1100);
+  assert.equal(statusPatches, 1);
+  assert.equal(await statusStorage.get('job'), undefined);
+  // Repeating the notification verifies the existing placement without PATCH.
+  await statusDelivery.fetch(requestStatus()); await statusDelivery.alarm();
+  assert.equal(statusPatches, 1);
+  assert.equal((await statusStorage.get('confirmed')).verified, true);
+  // Jira read failures must not fall back to the webhook's obsolete status.
+  globalThis.fetch = async () => json({}, 503);
+  await statusDelivery.fetch(requestStatus()); await statusDelivery.alarm();
+  assert.ok(await statusStorage.get('job'));
 } finally {
   globalThis.fetch = originalFetch;
   console.log = originalLog;

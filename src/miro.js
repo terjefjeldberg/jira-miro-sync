@@ -8,7 +8,7 @@ const INCOMING_FRAME_CACHE_TTL_MS = 30_000;
 export async function getItem(env, itemId, { signal, type } = {}) {
   const base = type === 'image' || type === 'frame'
     ? `https://api.miro.com/v2/boards/${encodeURIComponent(env.MIRO_BOARD_ID)}/${type}s` : itemsBase(env);
-  const response = await fetch(`${base}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal });
+  const response = await fetch(`${base}/${encodeURIComponent(itemId)}`, { headers: miroHeaders(env), signal: signal ?? AbortSignal.timeout(30000) });
   if (response.status === 404) return { ok: true, found: false };
   if (!response.ok) return { ok: false, found: true, status: response.status, error: await response.text() };
   return { ok: true, found: true, item: await response.json() };
@@ -249,7 +249,7 @@ async function writeWorkflowPosition(env, item, frame, target, x, y) {
     || y - height / 2 < 0 || y + height / 2 > Number(frame.frame.geometry.height)
     || overlap(x, width, target) < cfg.overlapThreshold) return { ok: false, stage: 'miro-unsafe-destination', moved: false };
   // Reject a stale plan if someone moved the card while reads were in flight.
-  const fresh = await getItem(env, item.id, { type: 'image', signal: AbortSignal.timeout(5000) });
+  const fresh = await getItem(env, item.id, { type: 'image' });
   if (!fresh.ok || !fresh.found || !samePosition(item, fresh.item)) return { ok: false, stage: 'miro-move-stale-position', moved: false };
   const issueKey = issueKeyFromImage(item);
   const before = { itemId: String(item.id), parentId: itemParent(item), reference: itemReference(item), position: item.position, recordedAt: new Date().toISOString() };
@@ -257,7 +257,7 @@ async function writeWorkflowPosition(env, item, frame, target, x, y) {
   const patch = { parent: { id: frame.id }, position: { x, y, origin: 'center', relativeTo: 'parent_top_left' } };
   const response = await patchItem(env, item.id, patch);
   if (!response.ok) return { ok: false, stage: 'miro-move', miroStatus: response.status, error: await response.text() };
-  const check = await getItem(env, item.id, { type: 'image', signal: AbortSignal.timeout(5000) });
+  const check = await getItem(env, item.id, { type: 'image' });
   if (!check.ok || !check.found) return { ok: false, stage: 'miro-move-verification-unavailable', itemId: String(item.id) };
   const actual = await localPosition(env, check.item, frame);
   if (issueKeyFromImage(check.item) !== issueKey || itemParent(check.item) !== frame.id || !actual
@@ -278,7 +278,7 @@ export async function moveMappedItemToStatus(env, itemId, status) {
   const target = cfg.layout.columns.find(column => normalizeStatus(column.status) === normalizeStatus(status));
   if (!target) return { ok: true, moved: false, ignored: true, reason: `Unapproved status: ${status}` };
   if (await env.CARD_MAP.get(`move-quarantine:${itemId}`)) return { ok: false, stage: 'miro-move-quarantined', moved: false };
-  const read = await getItem(env, itemId, { type: 'image', signal: AbortSignal.timeout(5000) });
+  const read = await getItem(env, itemId, { type: 'image' });
   if (!read.ok) return { ok: false, stage: 'miro-read', miroStatus: read.status, error: read.error };
   if (!read.found) return { ok: true, mapped: false, moved: false, missing: true };
   const item = read.item;
@@ -298,7 +298,7 @@ export async function moveMappedItemToStatus(env, itemId, status) {
 
 export async function inspectMappedPosition(env, issueKey) {
   const itemId = await env.CARD_MAP.get(customMapKey(issueKey));
-  const item = itemId ? await getItem(env, itemId, { type: 'image', signal: AbortSignal.timeout(10000) }).catch(error => ({ ok: false, error: String(error) })) : null;
+  const item = itemId ? await getItem(env, itemId, { type: 'image' }).catch(error => ({ ok: false, error: String(error) })) : null;
   const frame = item?.ok && item.found ? await workflowFrame(env, item.item).catch(error => ({ ok: false, error: String(error) })) : null;
   const result = { issueKey, itemId, item, frame, layout: config(env).layout, inspectedAt: new Date().toISOString() };
   await env.CARD_MAP.put(`position-inspection:${issueKey}`, JSON.stringify(result));
