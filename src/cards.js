@@ -169,6 +169,7 @@ export async function createCard(env, issueKey, position, parentId = null) {
       await env.MIRO_DELIVERY_STORAGE.put('upload', { itemId: String(recovered.id), placement, positioned: false });
       return { ok: false, status: 502, stage: 'delivery-recovered-upload', itemId: String(recovered.id) };
     }
+    if (uploadStartedAt) return { ok: false, status: 502, stage: 'delivery-ambiguous-upload', reason: 'An earlier upload may have succeeded; keep searching rather than uploading a duplicate' };
   }
   const data = await getCardData(env, issueKey);
   if (!data.ok) return { ok: false, status: 502, stage: 'read-jira-data', jiraStatus: data.status, error: data.error };
@@ -188,10 +189,8 @@ export async function createDirectCard(env, issueKey, x, y) {
 
   const read = await getItem(env, result.itemId, { type: 'image' });
   if (!read.ok) return { ok: false, status: 502, stage: 'direct-read-existing-card', miroStatus: read.status, error: read.error };
-  if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
-    await env.CARD_MAP.delete(customMapKey(issueKey));
-    return createCard(env, issueKey, { x, y });
-  }
+  if (!read.found || String(read.item?.type ?? '') !== 'image' || issueKeyFromImage(read.item) !== issueKey) return { ok: false, status: 502, stage: 'direct-existing-card-unconfirmed' };
+  if (read.item.parent?.id && read.item.parent.id !== config(env).incomingFrameId) return { ...result, positionPreserved: true };
   const moved = await patchItem(env, result.itemId, {
     parent: { id: null },
     position: { x, y, origin: 'center', relativeTo: 'canvas_center' },
@@ -284,8 +283,7 @@ export async function refreshCard(env, issueKey, existingData = null, selectedIt
   const read = await getItem(env, itemId, { type: 'image' });
   if (!read.ok) return { ok: false, refreshed: false, mapped: true, stage: 'refresh-read-miro', miroStatus: read.status, error: read.error };
   if (!read.found || String(read.item?.type ?? '') !== 'image' || !issueKeyFromImage(read.item)) {
-    await env.CARD_MAP.delete(customMapKey(issueKey));
-    return { ok: true, refreshed: false, mapped: false, missing: true };
+    return { ok: false, refreshed: false, mapped: true, stage: 'refresh-canonical-card-unconfirmed', missing: true };
   }
 
   const [data, comments] = await Promise.all([

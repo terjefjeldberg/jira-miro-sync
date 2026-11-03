@@ -137,9 +137,6 @@ export async function resumeCardUpload(env, issueKey) {
       const recovered = listed.items.find(item => issueKeyFromImage(item) === issueKey);
       if (recovered) {
         await env.MIRO_DELIVERY_STORAGE.put('upload', { ...pending, itemId: String(recovered.id), missingReads: 0, positioned: false });
-      } else {
-        await env.MIRO_DELIVERY_STORAGE.delete('upload');
-        if (String(await env.CARD_MAP.get(customMapKey(issueKey))) === pending.itemId) await env.CARD_MAP.delete(customMapKey(issueKey));
       }
     }
     return { ok: false, stage: 'delivery-upload-not-visible', itemId: pending.itemId };
@@ -358,6 +355,21 @@ export function issueKeyFromImage(item) {
   const title = String(item?.data?.title ?? item?.title ?? '').trim();
   const match = title.match(/^CUSTOM_JIRA_CARD:([A-Z]+-\d+)$/i);
   return match ? normalizeIssueKey(match[1]) : null;
+}
+
+export async function removeOrphanDuplicate(env, issueKey, itemId, canonicalId) {
+  const mapped = await env.CARD_MAP.get(customMapKey(issueKey));
+  if (mapped !== canonicalId || itemId === canonicalId) return { ok: false, reason: 'Canonical mapping changed' };
+  const [canonical, duplicate] = await Promise.all([getItem(env, canonicalId, { type: 'image' }), getItem(env, itemId, { type: 'image' })]);
+  if (!canonical.ok || !canonical.found || issueKeyFromImage(canonical.item) !== issueKey || !canonical.item.parent?.id) return { ok: false, reason: 'Canonical card is not confirmed in a frame' };
+  if (duplicate.ok && !duplicate.found) return { ok: true, alreadyAbsent: true, canonicalId, itemId };
+  if (!duplicate.ok || issueKeyFromImage(duplicate.item) !== issueKey || duplicate.item.parent?.id
+    || duplicate.item.position?.relativeTo !== 'canvas_center' || duplicate.item.position.x !== 0 || duplicate.item.position.y !== 0) return { ok: false, reason: 'Duplicate is not an orphan at canvas origin' };
+  if (await env.CARD_MAP.get(customMapKey(issueKey)) !== canonicalId) return { ok: false, reason: 'Canonical mapping changed' };
+  if (!await deleteImage(env, itemId)) return { ok: false, reason: 'Duplicate deletion failed' };
+  const check = await getItem(env, itemId, { type: 'image' });
+  return { ok: check.ok && !check.found, canonicalId, itemId, deleted: check.ok && !check.found,
+    previousItem: duplicate.item, checkedAt: new Date().toISOString() };
 }
 
 export async function incomingPosition(env) {

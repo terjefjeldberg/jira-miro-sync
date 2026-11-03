@@ -118,6 +118,20 @@ For production migration, create a separate Worker/KV namespace and set these va
 
 ### Safe workflow positioning
 
+All Incoming and direct-conversion image creation runs through the same durable
+object per board/issue. Concurrent requests serialize, and upload IDs are saved
+before placement. Lost upload responses retain `uploadStartedAt`: after the
+short waiting period, retries search the board but never issue another POST
+while that outcome remains ambiguous. A known image ID is retained through
+404s/empty scans; missing reads never automatically erase a canonical mapping.
+This can leave delivery pending if Miro never exposes the upload; resolving
+that uncertainty is preferable to risking a second card. Direct retries also
+preserve cards already placed in a workflow frame.
+Internal `inspect_copies` searches the whole board for matching image titles.
+`remove_orphan_duplicate` requires both exact IDs, a valid mapped canonical card
+in a frame, and an unmapped duplicate at canvas (0,0). It refuses other cards,
+verifies deletion, and saves the result at `duplicate-cleanup:<issue>`.
+
 Image creation/resumption updates image title/size through `/images/{id}`, then
 sets parent and explicit coordinate reference through `/items/{id}`. The image
 update endpoint rejects `position.relativeTo`; never send placement through it.

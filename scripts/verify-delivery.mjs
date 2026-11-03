@@ -70,7 +70,7 @@ try {
     ? json({ fields: { status: { name: '0. Backlog' } } }) : json({}, 404);
   await delivery.alarm();
   assert.ok(await storage.get('job'));
-  assert.equal(await kv.get(customMapKey('SN-1')), undefined);
+  assert.equal(await kv.get(customMapKey('SN-1')), 'image-1');
 
   // Upload succeeds, placement fails. Persist its ID and repair that image
   // after a restart; never delete it or POST a second image.
@@ -92,12 +92,12 @@ try {
   assert.equal(uploads, 1);
   assert.equal(deletes, 0);
 
-  // Missing known upload: tolerate eventual visibility, then recover only
-  // after repeated 404s plus a complete successful scan of the board.
+  // Missing known upload: even repeated 404s and an empty listing cannot
+  // prove that an accepted upload will never become visible. Retain its ID.
   globalThis.fetch = async url => String(url).includes('/items?') ? json({ data: [] }) : json({}, 404);
   for (let n = 0; n < 3; n++) assert.equal((await resumeCardUpload(uploadEnv, 'SN-1')).ok, false);
-  assert.equal(await uploadStorage.get('upload'), undefined);
-  assert.equal(await uploadEnv.CARD_MAP.get(customMapKey('SN-1')), undefined);
+  assert.equal((await uploadStorage.get('upload')).itemId, 'image-1');
+  assert.equal(await uploadEnv.CARD_MAP.get(customMapKey('SN-1')), 'image-1');
 
   // An incomplete scan must never authorize a replacement upload.
   globalThis.fetch = async () => json({ data: [], cursor: 'more' });

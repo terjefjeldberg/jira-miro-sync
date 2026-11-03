@@ -2,7 +2,7 @@ import { assigneeColorKey, config, customMapKey, directPendingKey, freezeKey, is
 import { json, preflight, readJson, requireJiraWebhook, requireMiro } from './auth.js';
 import { addIssueComment, applyReporter, applyStickyMetadata, createIssueFromSticky, getCardData, getCardSummaries, getJiraAttachmentContent, listIssueComments, resolveMiroCommentAuthor, resolveReporter, syncMiroRemoteLink, transitionIssue } from './jira.js';
 import { assigneeColor, createDirectCard, createIncomingCard, normalizeAssigneeLabel, refreshCard, syncCommentIndicator } from './cards.js';
-import { getItem, inspectMappedPosition, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, repairMappedPosition, resumeCardUpload } from './miro.js';
+import { getItem, inspectMappedPosition, issueKeyFromImage, listItems, moveMappedItemToStatus, patchItem, registerMappings, removeOrphanDuplicate, repairMappedPosition, resumeCardUpload } from './miro.js';
 import { renderApp, renderAppClient, renderCommentsClient, renderCommentsModal, renderPanel, renderPanelClient } from './ui.js';
 import { auditJiraStatusChanges, hasMovement, logMovementAudit, prepareMovementAudit } from './movement-audit.js';
 
@@ -324,7 +324,14 @@ async function directCard(request, env, ctx) {
   const parsed = await bodyOr400(request); if (parsed.error) return parsed.error;
   const issueKey = normalizeIssueKey(parsed.body.issueKey), x = Number(parsed.body.x), y = Number(parsed.body.y);
   if (!issueKeyIsValid(issueKey, env) || !Number.isFinite(x) || !Number.isFinite(y)) return json({ ok: false, reason: 'Invalid issue key or position' }, 400);
-  const result = await createDirectCard(env, issueKey, x, y);
+  let result;
+  if (env.MIRO_CARD_DELIVERY) {
+    const id = env.MIRO_CARD_DELIVERY.idFromName(`${env.MIRO_BOARD_ID}:${issueKey}`);
+    const response = await env.MIRO_CARD_DELIVERY.get(id).fetch(new Request('https://card-delivery/direct', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issueKey, x, y }),
+    }));
+    result = await response.json();
+  } else result = await createDirectCard(env, issueKey, x, y);
   if (result.ok && result.itemId) {
     const sync = () => linkMiroCardBestEffort(env, issueKey, result.itemId);
     if (ctx?.waitUntil) ctx.waitUntil(sync()); else await sync();
@@ -355,6 +362,18 @@ async function processJiraWebhookBody(body, env, ctx) {
   const issueKey = normalizeIssueKey(body.issueKey);
   if (!issueKeyIsValid(issueKey, env)) return json({ ok: true, ignored: true, reason: `Only ${config(env).jiraProjectKey} issues are approved`, issueKey });
   if (body.event === 'inspect_position') return json(await inspectMappedPosition(env, issueKey));
+  if (body.event === 'remove_orphan_duplicate') {
+    const result = await removeOrphanDuplicate(env, issueKey, String(body.itemId), String(body.canonicalId));
+    await env.CARD_MAP.put(`duplicate-cleanup:${issueKey}`, JSON.stringify(result));
+    return json(result, result.ok ? 200 : 409);
+  }
+  if (body.event === 'inspect_copies') {
+    const listed = await listItems(env, { type: 'image' }, { signal: AbortSignal.timeout(30000) });
+    const result = { issueKey, complete: listed.ok, status: listed.status, error: listed.error,
+      matches: listed.items.filter(item => issueKeyFromImage(item) === issueKey), inspectedAt: new Date().toISOString() };
+    await env.CARD_MAP.put(`copies-inspection:${issueKey}`, JSON.stringify(result));
+    return json(result);
+  }
   if (body.event === 'inspect_delivery' || body.event === 'retry_delivery') {
     const id = env.MIRO_CARD_DELIVERY.idFromName(`${env.MIRO_BOARD_ID}:${issueKey}`);
     const stub = env.MIRO_CARD_DELIVERY.get(id);
@@ -448,13 +467,7 @@ async function processJiraWebhookBody(body, env, ctx) {
     : { ok: true, refreshed: false, skipped: 'status-only-webhook' };
   const custom = await moveMappedItemToStatus(env, String(customId), status);
   if (custom?.missing) {
-    await env.CARD_MAP.delete(customMapKey(issueKey));
-    if (!issueCreated) {
-      return json({ ok: true, moved: false, issueKey, status, staleMappingRemoved: true, skipped: 'existing-issue-without-miro-card' });
-    }
-    const incomingCreate = await createIncomingCard(env, issueKey);
-    if (incomingCreate.ok !== false) await linkMiroCardBestEffort(env, issueKey, incomingCreate.itemId);
-    return json({ ok: incomingCreate.ok !== false, moved: false, issueKey, status, staleMappingRemoved: true, incomingCreate }, incomingCreate.ok === false ? (incomingCreate.status || 500) : 200);
+    return json({ ok: false, moved: false, issueKey, status, stage: 'canonical-card-unconfirmed', itemId: customId }, 502);
   }
   const ok = custom.ok !== false && customRefresh.ok !== false;
   return json({ ok, issueKey, status, moved: Boolean(custom.moved), mappingRecoveredFromBoard, custom, customRefresh }, ok ? 200 : 500);
@@ -528,6 +541,17 @@ export class MiroCardDelivery {
       return json({ ok: true, retryScheduled: true });
     });
     const body = await request.json();
+    if (new URL(request.url).pathname === '/direct') {
+      if (!issueKeyIsValid(body.issueKey, this.env) || ![body.x, body.y].every(Number.isFinite)) return json({ ok: false }, 400);
+      return this.serial(async () => {
+        // Use the SAME durable object/storage as Incoming creation. Concurrent
+        // retries and Jira creation events cannot both upload a card.
+        const resumed = await resumeCardUpload(this.env, body.issueKey);
+        if (!resumed.ok) return json(resumed, 502);
+        const result = await createDirectCard(this.env, body.issueKey, body.x, body.y);
+        return json(result, result.ok ? 200 : (result.status || 502));
+      });
+    }
     const statusJob = new URL(request.url).pathname === '/ensure-status';
     if (!issueKeyIsValid(body.issueKey, this.env) || (!statusJob && !isIssueCreationWebhook(body))) return json({ ok: false }, 400);
     return this.serial(async () => {
@@ -592,7 +616,6 @@ export class MiroCardDelivery {
         const read = await getItem(this.env, itemId, { type: 'image' });
         if (!read.ok) throw new Error(JSON.stringify(read));
         if (!read.found || read.item?.type !== 'image' || issueKeyFromImage(read.item) !== issueKey) {
-          await this.env.CARD_MAP.delete(customMapKey(issueKey));
           throw new Error('Mapped card is missing or belongs to another issue');
         }
         const item = read.item;
@@ -643,7 +666,7 @@ export default {
       let response;
       try {
         const body = message.body ?? {};
-        const diagnostic = ['inspect_position', 'repair_position', 'inspect_delivery', 'retry_delivery'].includes(body.event);
+        const diagnostic = ['inspect_position', 'inspect_copies', 'remove_orphan_duplicate', 'repair_position', 'inspect_delivery', 'retry_delivery'].includes(body.event);
         response = isIssueCreationWebhook(body)
           ? await scheduleCardDelivery(env, { ...body, issueKey: normalizeIssueKey(body.issueKey) })
           : env.MIRO_CARD_DELIVERY && !diagnostic
